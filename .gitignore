@@ -1,5 +1,12 @@
 node_modules/
 dist/
+
+# Playwright MCP writes page snapshots and screenshots here
+.playwright-mcp/
+
+# Personal Claude Code overrides
+.claude/settings.local.json
+
 .DS_Store
 Thumbs.db
 *.log

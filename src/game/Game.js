@@ -1,6 +1,9 @@
 import * as THREE from "three";
 
+import { CAMERA, WORLD } from "./constants.js";
 import { Input } from "./Input.js";
+import { Player, PlayerView } from "./Player.js";
+import { damp } from "./tunnelMath.js";
 
 /**
  * Game states. Phase 1 wires up the full set even though only `loading`,
@@ -14,22 +17,8 @@ export const GameState = {
   VICTORY: "victory",
 };
 
-/** Shared world constants. Later phases build the tunnel around these. */
-export const WORLD = {
-  tunnelRadius: 5,
-  /**
-   * Z the player rides at; the camera sits behind it looking down -Z. The gap
-   * to `cameraZ` is set so the full tunnel wall stays inside the vertical FOV
-   * at the shortest supported viewport.
-   */
-  playerZ: -10,
-  cameraZ: 0,
-  /** Distance at which rings spawn ahead of the player. */
-  spawnZ: -160,
-  fov: 72,
-  near: 0.1,
-  far: 400,
-};
+/** Re-exported for convenience; `constants.js` is the source of truth. */
+export { WORLD } from "./constants.js";
 
 /** Long frames (tab switches, breakpoints) must not teleport the world. */
 const MAX_DELTA = 1 / 20;
@@ -69,6 +58,8 @@ export class Game {
 
     this.state = GameState.LOADING;
     this.input = new Input();
+    this.player = new Player();
+    this.playerView = new PlayerView();
 
     /** Seconds of simulated flight in the current run. */
     this.elapsed = 0;
@@ -154,37 +145,30 @@ export class Game {
     this.scene.add(rimLight);
 
     this._buildPlaceholder();
+
+    this.scene.add(this.playerView.object3D);
+    this.playerView.sync(this.player, 0);
   }
 
   /**
-   * Temporary render check: a neon wireframe ring at the tunnel radius plus a
-   * marker riding its wall. Phases 2-4 replace both with the real player and
-   * ring meshes.
+   * Temporary depth reference: static neon wireframe rings down the tunnel, so
+   * angular movement and perspective are readable before Phase 3 builds the
+   * real tunnel. Phase 3 replaces this group wholesale.
    */
   _buildPlaceholder() {
     this.placeholder = new THREE.Group();
 
-    const ring = new THREE.Mesh(
-      new THREE.TorusGeometry(WORLD.tunnelRadius, 0.16, 8, 64),
-      new THREE.MeshBasicMaterial({ color: 0x46f0ff, wireframe: true }),
-    );
-    ring.position.z = WORLD.playerZ - 14;
-    this.placeholder.add(ring);
-    this._placeholderRing = ring;
+    const geometry = new THREE.TorusGeometry(WORLD.tunnelRadius, 0.08, 6, 48);
+    const material = new THREE.MeshBasicMaterial({
+      color: 0x1d6a86,
+      wireframe: true,
+    });
 
-    const marker = new THREE.Mesh(
-      new THREE.IcosahedronGeometry(0.6, 0),
-      new THREE.MeshStandardMaterial({
-        color: 0xff3ea5,
-        emissive: 0xff3ea5,
-        emissiveIntensity: 0.6,
-        roughness: 0.35,
-        metalness: 0.1,
-      }),
-    );
-    marker.position.set(0, -WORLD.tunnelRadius + 0.9, WORLD.playerZ);
-    this.placeholder.add(marker);
-    this._placeholderMarker = marker;
+    for (let i = 1; i <= 8; i += 1) {
+      const ring = new THREE.Mesh(geometry, material);
+      ring.position.z = WORLD.playerZ - i * 14;
+      this.placeholder.add(ring);
+    }
 
     this.scene.add(this.placeholder);
   }
@@ -207,9 +191,13 @@ export class Game {
 
     if (this.state === GameState.PLAYING) {
       this.elapsed += delta;
+      this.player.update(delta, this.input.axis);
     }
 
-    this._updatePlaceholder(delta);
+    // Synced in every state so the ship keeps its idle spin and settles its
+    // bank after a run ends.
+    this.playerView.sync(this.player, delta);
+    this._updateCamera(delta);
   }
 
   _handleAction() {
@@ -226,26 +214,35 @@ export class Game {
     }
   }
 
-  _updatePlaceholder(delta) {
-    // Idle drift in `ready`, faster spin once flying, so state changes are
-    // visible before any real gameplay exists.
-    const rate = this.state === GameState.PLAYING ? 1.1 : 0.25;
-    this._placeholderRing.rotation.z += rate * delta;
+  /**
+   * The camera drifts a fraction of the player's offset. Enough parallax to
+   * keep the ship legible against the wall it rides, small enough that the
+   * tunnel's vanishing point stays centred.
+   */
+  _updateCamera(delta) {
+    const { x, y } = this.player.position;
+    const targetX = x * CAMERA.followAmount;
+    const targetY = y * CAMERA.followAmount;
 
-    const orbit = this.state === GameState.PLAYING ? this.elapsed * 1.4 : 0;
-    const theta = -Math.PI / 2 + orbit;
-    const radius = WORLD.tunnelRadius - 0.9;
-    this._placeholderMarker.position.set(
-      Math.cos(theta) * radius,
-      Math.sin(theta) * radius,
-      WORLD.playerZ,
+    this.camera.position.x = damp(
+      this.camera.position.x,
+      targetX,
+      CAMERA.followResponse,
+      delta,
     );
-    this._placeholderMarker.rotation.y += 1.6 * delta;
+    this.camera.position.y = damp(
+      this.camera.position.y,
+      targetY,
+      CAMERA.followResponse,
+      delta,
+    );
+    this.camera.lookAt(0, 0, WORLD.spawnZ);
   }
 
   _resetRun() {
     this.elapsed = 0;
     this.ringsCleared = 0;
+    this.player.reset();
   }
 
   // --- Presentation ------------------------------------------------------
