@@ -43,3 +43,10 @@ export function approach(current, target, maxDelta) {
 export function damp(current, target, rate, delta) {
   return target + (current - target) * Math.exp(-rate * delta);
 }
+
+/** Constrains `value` to the inclusive `min..max` range. */
+export function clamp(value, min, max) {
+  if (value < min) return min;
+  if (value > max) return max;
+  return value;
+}

@@ -1,8 +1,10 @@
 import * as THREE from "three";
 
-import { CAMERA, WORLD } from "./constants.js";
+import { CAMERA, SPEED, WORLD } from "./constants.js";
 import { Input } from "./Input.js";
+import { Obstacles } from "./Obstacles.js";
 import { Player, PlayerView } from "./Player.js";
+import { Tunnel } from "./Tunnel.js";
 import { damp } from "./tunnelMath.js";
 
 /**
@@ -60,10 +62,14 @@ export class Game {
     this.input = new Input();
     this.player = new Player();
     this.playerView = new PlayerView();
+    this.tunnel = new Tunnel();
+    this.obstacles = new Obstacles();
 
     /** Seconds of simulated flight in the current run. */
     this.elapsed = 0;
     this.ringsCleared = 0;
+    /** Current forward speed; the world scrolls past the player at this rate. */
+    this.speed = SPEED.idle;
 
     this._lastFrameTime = 0;
     this._frameHandle = 0;
@@ -104,6 +110,8 @@ export class Game {
     cancelAnimationFrame(this._frameHandle);
     window.removeEventListener("resize", this._onResize);
     this.input.dispose();
+    this.tunnel.dispose();
+    this.obstacles.dispose();
     this.renderer.dispose();
   }
 
@@ -123,7 +131,9 @@ export class Game {
 
   _initScene() {
     this.scene = new THREE.Scene();
-    this.scene.fog = new THREE.Fog(0x04030d, 40, 180);
+    // Fog starts close so the tunnel falls away to black behind the gates the
+    // player still has time to react to.
+    this.scene.fog = new THREE.Fog(0x04030d, 22, 170);
 
     this.camera = new THREE.PerspectiveCamera(
       WORLD.fov,
@@ -134,43 +144,23 @@ export class Game {
     this.camera.position.set(0, 0, WORLD.cameraZ);
     this.camera.lookAt(0, 0, WORLD.spawnZ);
 
-    this.scene.add(new THREE.AmbientLight(0x334466, 1.4));
+    // Kept deliberately dim: the tunnel wall is a large lit surface, and the
+    // gates only read if it stays a dark backdrop for them.
+    this.scene.add(new THREE.AmbientLight(0x1a2a4d, 0.5));
 
-    const keyLight = new THREE.PointLight(0x46f0ff, 240, 120, 2);
-    keyLight.position.set(0, 0, WORLD.playerZ + 4);
+    const keyLight = new THREE.PointLight(0x46f0ff, 70, 55, 2);
+    keyLight.position.set(0, 0, WORLD.playerZ + 6);
     this.scene.add(keyLight);
 
-    const rimLight = new THREE.PointLight(0xff3ea5, 180, 160, 2);
-    rimLight.position.set(0, WORLD.tunnelRadius, WORLD.playerZ - 30);
+    const rimLight = new THREE.PointLight(0xff3ea5, 45, 70, 2);
+    rimLight.position.set(0, WORLD.tunnelRadius * 0.8, WORLD.playerZ - 26);
     this.scene.add(rimLight);
 
-    this._buildPlaceholder();
+    this.scene.add(this.tunnel.object3D);
+    this.scene.add(this.obstacles.object3D);
 
     this.scene.add(this.playerView.object3D);
     this.playerView.sync(this.player, 0);
-  }
-
-  /**
-   * Temporary depth reference: static neon wireframe rings down the tunnel, so
-   * angular movement and perspective are readable before Phase 3 builds the
-   * real tunnel. Phase 3 replaces this group wholesale.
-   */
-  _buildPlaceholder() {
-    this.placeholder = new THREE.Group();
-
-    const geometry = new THREE.TorusGeometry(WORLD.tunnelRadius, 0.08, 6, 48);
-    const material = new THREE.MeshBasicMaterial({
-      color: 0x1d6a86,
-      wireframe: true,
-    });
-
-    for (let i = 1; i <= 8; i += 1) {
-      const ring = new THREE.Mesh(geometry, material);
-      ring.position.z = WORLD.playerZ - i * 14;
-      this.placeholder.add(ring);
-    }
-
-    this.scene.add(this.placeholder);
   }
 
   // --- Loop --------------------------------------------------------------
@@ -188,16 +178,35 @@ export class Game {
 
   _update(delta) {
     this._handleAction();
+    this._updateSpeed(delta);
 
     if (this.state === GameState.PLAYING) {
       this.elapsed += delta;
       this.player.update(delta, this.input.axis);
+      this.obstacles.update(delta);
     }
+
+    // The tunnel scrolls in every state: at cruise speed during a run, and at
+    // an idle drift behind the menus so the scene never looks frozen.
+    this.tunnel.update(delta);
 
     // Synced in every state so the ship keeps its idle spin and settles its
     // bank after a run ends.
     this.playerView.sync(this.player, delta);
     this._updateCamera(delta);
+  }
+
+  /**
+   * Eases toward the speed the current state calls for, so launching from the
+   * menu reads as an acceleration instead of a jump cut. Phase 7 replaces the
+   * flat cruise target with the difficulty curve.
+   */
+  _updateSpeed(delta) {
+    const target = this.state === GameState.PLAYING ? SPEED.base : SPEED.idle;
+
+    this.speed = damp(this.speed, target, SPEED.response, delta);
+    this.tunnel.setSpeed(this.speed);
+    this.obstacles.setSpeed(this.speed);
   }
 
   _handleAction() {
@@ -242,7 +251,12 @@ export class Game {
   _resetRun() {
     this.elapsed = 0;
     this.ringsCleared = 0;
+    this.speed = SPEED.idle;
+
     this.player.reset();
+    this.tunnel.reset();
+    this.obstacles.setSpeed(SPEED.base);
+    this.obstacles.reset();
   }
 
   // --- Presentation ------------------------------------------------------
