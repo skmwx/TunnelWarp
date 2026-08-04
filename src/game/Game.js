@@ -2,6 +2,7 @@ import * as THREE from "three";
 
 import { createRunResult, resolveRings } from "./Collision.js";
 import { CAMERA, REWARD_TIERS, RINGS, SPEED, WORLD } from "./constants.js";
+import { speedFor } from "./Difficulty.js";
 import { Input } from "./Input.js";
 import { Obstacles } from "./Obstacles.js";
 import { Player, PlayerView } from "./Player.js";
@@ -113,11 +114,12 @@ function bestBadge(game) {
   return "";
 }
 
-/** The forward speed each state settles at. */
-function speedTargetFor(state) {
+/** The forward speed the game settles at, given its state and progress. */
+function speedTargetFor(state, rings) {
   switch (state) {
+    // The difficulty curve owns the run: speed climbs with every ring cleared.
     case GameState.PLAYING:
-      return SPEED.base;
+      return speedFor(rings);
     // A finished run holds still. The gate that ended it stays sitting on the
     // ship, which is the clearest possible read of what just happened.
     case GameState.GAME_OVER:
@@ -190,6 +192,9 @@ export class Game {
   setState(next) {
     if (this.state === next) return;
     this.state = next;
+
+    // Outside a run the gates are backdrop, not a graded gauntlet.
+    this.obstacles.setScenery(next !== GameState.PLAYING);
 
     if (next === GameState.PLAYING) {
       this._resetRun();
@@ -281,7 +286,7 @@ export class Game {
     if (this.state === GameState.PLAYING) {
       this.elapsed += delta;
       // Distance is scored off the actual speed, so the launch ramp is worth
-      // less than cruising and Phase 7's faster rings are worth more.
+      // less than cruising and the late, faster rings are worth more.
       this.score.addDistance(this.speed * delta);
       this.player.update(delta, this.input.axis);
     }
@@ -333,11 +338,11 @@ export class Game {
 
   /**
    * Eases toward the speed the current state calls for, so launching from the
-   * menu reads as an acceleration instead of a jump cut. Phase 7 replaces the
-   * flat cruise target with the difficulty curve.
+   * menu reads as an acceleration instead of a jump cut — and so the curve's
+   * milestone steps arrive as a surge rather than a jolt.
    */
   _updateSpeed(delta) {
-    const target = speedTargetFor(this.state);
+    const target = speedTargetFor(this.state, this.ringsCleared);
 
     this.speed = damp(this.speed, target, SPEED.response, delta);
     this.tunnel.setSpeed(this.speed);
@@ -400,7 +405,9 @@ export class Game {
     this.score.reset();
     this.player.reset();
     this.tunnel.reset();
-    this.obstacles.setSpeed(SPEED.base);
+    // Reset before the first frame moves anything, so the prefilled gates are
+    // laid out against the speed the run actually launches at.
+    this.obstacles.setSpeed(speedFor(0));
     this.obstacles.reset();
   }
 

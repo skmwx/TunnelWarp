@@ -189,8 +189,10 @@ export class Tunnel {
   // --- Presentation ------------------------------------------------------
 
   _applyTint() {
-    const range = Math.max(SPEED.max - SPEED.base, 1);
-    const tint = clamp((this._speed - SPEED.base) / range, 0, 1);
+    // Anchored to the difficulty curve's own endpoints, so the tunnel is at its
+    // coldest on the launch ring and fully hot only at the speed cap.
+    const range = Math.max(SPEED.cap - SPEED.start, 1);
+    const tint = clamp((this._speed - SPEED.start) / range, 0, 1);
     if (Math.abs(tint - this._tint) < 0.002) return;
     this._tint = tint;
 

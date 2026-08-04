@@ -16,6 +16,18 @@ export function normalizeAngle(angle) {
 }
 
 /**
+ * Shortest signed turn from `from` to `to`, in `-PI..PI`.
+ *
+ * Going through `normalizeAngle` first is what makes the `0` / `2 * PI` seam a
+ * non-event: an angle just above zero and one just below `2 * PI` come out a
+ * few thousandths apart, not a full turn.
+ */
+export function angularDelta(from, to) {
+  const diff = normalizeAngle(to - from);
+  return diff > Math.PI ? diff - TAU : diff;
+}
+
+/**
  * Writes tunnel-polar coordinates into an existing `{ x, y, z }` target —
  * a `THREE.Vector3` works, and so does a plain object. Mutating a caller-owned
  * target keeps the hot path allocation-free.

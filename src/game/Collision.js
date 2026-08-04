@@ -1,30 +1,19 @@
 import { COLLISION } from "./constants.js";
-import { normalizeAngle, TAU } from "./tunnelMath.js";
+import { angularDelta, normalizeAngle } from "./tunnelMath.js";
 
 /**
  * Collision and ring-clearing rules.
  *
  * Everything here is polar arithmetic over the plain ring records `Obstacles`
- * keeps — no mesh intersection, no Three.js. A gate is a Z band plus an angular
- * gap; the ship is a fixed Z with an angular and a depth half-extent. That
- * keeps the test to a handful of comparisons, and keeps what the player sees
- * (the wedge edges) exactly aligned with what ends the run.
+ * keeps — no mesh intersection, no Three.js. A gate is a Z band plus one or
+ * more angular gaps and a rotation; the ship is a fixed Z with an angular and a
+ * depth half-extent. That keeps the test to a handful of comparisons, and keeps
+ * what the player sees (the wedge edges) exactly aligned with what ends the
+ * run, including while a gate is turning.
  */
 
 /** Re-exported so a collision caller gets the whole angle toolkit in one import. */
-export { normalizeAngle };
-
-/**
- * Shortest signed turn from `from` to `to`, in `-PI..PI`.
- *
- * Going through `normalizeAngle` first is what makes the `0` / `2 * PI` seam a
- * non-event: an angle just above zero and one just below `2 * PI` come out a
- * few thousandths apart, not a full turn.
- */
-export function angularDelta(from, to) {
-  const diff = normalizeAngle(to - from);
-  return diff > Math.PI ? diff - TAU : diff;
-}
+export { angularDelta, normalizeAngle };
 
 /** Shortest angular distance between two angles, in `0..PI`. */
 export function angularDistance(a, b) {
@@ -45,6 +34,24 @@ export function isInsideGap(theta, gapCenterTheta, gapWidth, halfWidth = 0) {
   if (clearance <= 0) return false;
 
   return angularDistance(theta, gapCenterTheta) <= clearance;
+}
+
+/**
+ * True when the ship is lined up with any of a gate's openings.
+ *
+ * A gate stores its gaps in its own frame and its rotation separately, so the
+ * live angle of an opening is the sum of the two. Testing every gap is what
+ * makes a double-gap gate genuinely two ways through rather than one that
+ * happens to be drawn twice.
+ */
+export function isInsideAnyGap(theta, ring, halfWidth = 0) {
+  for (let i = 0; i < ring.gapCount; i += 1) {
+    const gap = ring.gaps[i];
+    if (isInsideGap(theta, gap.centerTheta + ring.rotation, gap.width, halfWidth)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /** Half the Z band within which a gate and the ship can touch. */
@@ -92,12 +99,7 @@ export function resolveRings(rings, player, result) {
     const contacting = ring.prevZ <= bandEnd;
     if (
       contacting &&
-      !isInsideGap(
-        player.theta,
-        ring.gapCenterTheta,
-        ring.gapWidth,
-        COLLISION.playerHalfAngle,
-      )
+      !isInsideAnyGap(player.theta, ring, COLLISION.playerHalfAngle)
     ) {
       result.hit = ring;
       // The run ends on the first hit; gates behind it never get their turn.

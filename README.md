@@ -60,6 +60,7 @@ src/
     Player.js         Angular player state + UFO mesh
     Tunnel.js         Scrolling tunnel shell: wall, rails, recycling hoops
     Obstacles.js      Ring gate spawning, motion, recycling, and meshes
+    Difficulty.js     The ramp: speed, spacing, gap width, rotation, variants
     Collision.js      Angular math, ring clearing, and run-ending hits
     Score.js          Run scoring, reward tiers, persistent local best
     constants.js      Shared world, player, gate, score, and camera tuning
@@ -76,16 +77,48 @@ Phases follow [docs/main/02_Phased_Implementation_Plan.md](docs/main/02_Phased_I
 - [x] Phase 4 — ring obstacles
 - [x] Phase 5 — collision, ring clearing, run end
 - [x] Phase 6 — score, UI overlay, local best
-- [ ] Phase 7 — difficulty progression
+- [x] Phase 7 — difficulty progression
 - [ ] Phase 8 — collectibles and warp meter
 - [ ] Phase 9 — visual and audio polish
 - [ ] Phase 10 — usability, accessibility, performance
 - [ ] Phase 11 — manual QA and release candidate
 
-The ring-survival loop is playable end to end: gates spawn ahead with a single
-safe gap, flying through one increments the ring counter, clipping one ends the
-run, and clearing 66 wins. The difficulty ramp arrives in Phase 7, so every gate
-currently has the same width, spacing, and speed.
+The ring-survival loop is playable end to end: gates spawn ahead with a safe
+gap, flying through one increments the ring counter, clipping one ends the run,
+and clearing 66 wins. Difficulty now ramps across a run — see below. Warp energy
+and the warp meter arrive in Phase 8.
+
+## Difficulty
+
+Every gate is planned from the ring number it will be when the player reaches
+it, so its width, spacing and rotation are fixed the moment it spawns and never
+shift mid-approach. The curves live in [Difficulty.js](src/game/Difficulty.js)
+and are tuned by `DIFFICULTY` in [constants.js](src/game/constants.js).
+
+| Ring | Speed | Reaction window | Gap | New this stretch     |
+| ---- | ----- | --------------- | --- | -------------------- |
+| 1–5  | 26/s  | 1.40s           | 120° | tutorial: nothing moves |
+| 9+   | ~31/s | 1.35s           | 120° | rotating gates       |
+| 19+  | ~39/s | 1.22s           | 105° | narrow gates         |
+| 29+  | ~49/s | 1.09s           | 90°  | double-gap gates     |
+| 58+  | 74/s  | 0.72s           | 60°  | every curve capped   |
+
+Spacing is derived from the reaction window rather than tuned directly, so as
+the ship speeds up the gates spread further apart in Z while still arriving
+sooner. Speed itself is a smooth ramp plus a step every 7 rings, and `Game`
+eases toward it, which turns each step into a surge rather than a jolt.
+
+Generation is chained so a run is always flyable: a gate's gap is placed within
+the angular distance the ship could cover since the previous gate, measured at
+*arrival* — a rotating gate is aimed at where its gap will have drifted to, so
+spin is a tracking problem and never an unreachable one. The chain tracks every
+opening of the previous gate, not just the one it aimed at, so taking the near
+gap of a double gate can never strand the player; when no split satisfies that,
+the gate falls back to a single opening.
+
+Verified by simulation: a perfect autopilot cleared 60/60 generated runs to Ring
+66, while a pilot capped at a 200ms reaction delay never died before Ring 10 and
+reached a median of Ring 25.
 
 ## Scoring
 
@@ -95,7 +128,7 @@ short lucky one each keep their record — see [Score.js](src/game/Score.js).
 
 | Source          | Points                                    |
 | --------------- | ----------------------------------------- |
-| Distance flown  | 1 per world unit (~34/s at cruise speed)  |
+| Distance flown  | 1 per world unit (26/s at launch, 74/s capped) |
 | Gate cleared    | 250                                       |
 | Ring 10 — small prize | 1,000 bonus                         |
 | Ring 30 — big prize   | 5,000 bonus                         |
@@ -109,8 +142,9 @@ best still tracks within the session, and the start screen says it will not be
 saved.
 
 Collision is polar arithmetic, not mesh intersection — see
-[Collision.js](src/game/Collision.js). A gate is a Z band plus a gap centre and
-width; the ship is a fixed Z with an angular and a depth half-extent from
+[Collision.js](src/game/Collision.js). A gate is a Z band plus one or more gap
+centres and widths and a rotation; the ship is a fixed Z with an angular and a
+depth half-extent from
 `COLLISION` in [constants.js](src/game/constants.js). Gates are tested against
 the Z span they swept during the frame, so a long frame cannot let one jump the
 ship.

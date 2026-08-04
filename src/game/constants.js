@@ -21,8 +21,14 @@ export const WORLD = {
    */
   playerZ: -10,
   cameraZ: 0,
-  /** Distance at which rings spawn ahead of the player. */
-  spawnZ: -160,
+  /**
+   * Distance at which rings spawn ahead of the player.
+   *
+   * Sized off the fastest the run ever gets: at `SPEED.cap` a gate still has
+   * ~2.4s of flight from here to the ship, which is three gates of lookahead at
+   * the tightest late-game spacing.
+   */
+  spawnZ: -190,
   fov: 72,
   near: 0.1,
   far: 400,
@@ -49,16 +55,20 @@ export const PLAYER = {
 /**
  * Forward flight speed, in world units per second.
  *
- * Phase 7 owns the difficulty ramp; for now `base` is a flat cruise speed and
- * `idle` keeps the tunnel drifting in the menu states so it never looks frozen.
+ * The run speed is a curve over rings cleared, owned by `Difficulty.js`; these
+ * are its endpoints. `idle` keeps the tunnel drifting in the menu states so the
+ * scene never looks frozen.
  */
 export const SPEED = {
-  base: 34,
+  /** Launch speed, held flat through the tutorial rings. */
+  start: 26,
+  /** Where the smooth ramp tops out, before milestone boosts are added. */
+  cruise: 58,
+  /** Hard ceiling. Boosts stack onto the ramp but can never pass this. */
+  cap: 74,
   idle: 10,
   /** Exponential response when the target speed changes, per second. */
   response: 1.6,
-  /** Speed at which the tunnel's colour shift saturates. */
-  max: 90,
 };
 
 /** The scrolling tunnel shell: dark wall, static rails, recycling hoops. */
@@ -85,12 +95,19 @@ export const TUNNEL = {
  */
 export const RINGS = {
   lanes: 24,
-  /** Z distance between consecutive gates. Phase 7 tightens this. */
-  spacing: 26,
   /** Z of the first gate of a run: far enough ahead to read before it arrives. */
   firstZ: -70,
-  /** Lanes left open. Phase 7 narrows this; 2 is the hard floor. */
-  gapLanes: 5,
+  /** Openings a single gate may have. `Difficulty` decides how many it gets. */
+  maxGaps: 2,
+  /** Blocked lanes guaranteed between the two openings of a double gate. */
+  gapSeparationLanes: 2,
+  /**
+   * Radians of placement freedom held back for the gate that follows a double
+   * gate. Both openings of a double have to leave the next gate somewhere
+   * reachable, and this is how much of that arc is protected from being eaten
+   * by a wide split.
+   */
+  gapFreedom: 0.3,
   /** Z depth of a gate; half of it is the gate's share of the contact band. */
   thickness: 1.2,
   /** Rings cleared to win the run outright. The jackpot of the original cabinet. */
@@ -118,6 +135,61 @@ export const RINGS = {
 };
 
 /**
+ * The difficulty curve, in ring numbers.
+ *
+ * Every gate is planned from the ring number it will be when the player reaches
+ * it, so a gate's difficulty is fixed the moment it spawns and the ramp is the
+ * same on every run. Rings 1 through `tutorialRings` are held at the easiest
+ * values of every curve; from there each curve interpolates to its hardest
+ * value at `rampRing` and is capped, so the last stretch to Ring 66 is
+ * demanding but never escalates past what has already been survived.
+ *
+ * Ranges are `{ start, end }` pairs read as "value at introduction" and "value
+ * once the curve has fully ramped".
+ */
+export const DIFFICULTY = {
+  /** Rings held at tutorial settings: wide gaps, no rotation, slowest speed. */
+  tutorialRings: 5,
+  /** Ring at which every curve reaches its hardest value and stops. */
+  rampRing: 58,
+  /** Gates may rotate only after this ring. */
+  rotationFromRing: 8,
+  /** Extra-narrow gates appear only after this ring. */
+  narrowFromRing: 18,
+  /** Double-gap gates appear only after this ring. */
+  doubleFromRing: 28,
+
+  /** Milestone speed boosts: one step of `speedStep` every `speedStepRings`. */
+  speedStepRings: 7,
+  speedStep: 2.2,
+
+  /** Seconds between consecutive gates arriving. Z spacing is derived. */
+  interval: { start: 1.4, end: 0.72 },
+
+  /** Lanes left open, of `RINGS.lanes`. */
+  gapLanes: { start: 8, end: 4 },
+  /** Lanes a narrow gate gives up against the standard width for its ring. */
+  narrowLanes: 1,
+  /**
+   * Floor on gap width. Three lanes is 45°, against a ~14° ship: tight enough
+   * to demand a committed line, wide enough that one exists.
+   */
+  minGapLanes: 3,
+
+  /** Gate rotation, radians per second. Well under the ship's 3.4 rad/s. */
+  rotation: { start: 0.22, end: 0.85 },
+  /** Rotation is gentler on a narrow gate, so the two never compound fully. */
+  narrowRotationScale: 0.6,
+
+  /** Odds a gate of an eligible ring takes each variation. */
+  chance: {
+    rotation: { start: 0.35, end: 0.9 },
+    narrow: { start: 0.15, end: 0.35 },
+    double: { start: 0.15, end: 0.3 },
+  },
+};
+
+/**
  * Scoring weights.
  *
  * Rings are the headline number the cabinet is built around; the score is the
@@ -126,7 +198,7 @@ export const RINGS = {
  * worth more than the stretch of tunnel leading to it.
  */
 export const SCORE = {
-  /** Points per world unit flown. At cruise speed, ~34 points per second. */
+  /** Points per world unit flown: 26/s at launch, 74/s at the speed cap. */
   perDistanceUnit: 1,
   /** Points for clearing a single gate, before any milestone bonus. */
   perRing: 250,
