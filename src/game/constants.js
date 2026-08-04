@@ -91,8 +91,10 @@ export const RINGS = {
   firstZ: -70,
   /** Lanes left open. Phase 7 narrows this; 2 is the hard floor. */
   gapLanes: 5,
-  /** Z depth of a gate, used by collision in Phase 5. */
+  /** Z depth of a gate; half of it is the gate's share of the contact band. */
   thickness: 1.2,
+  /** Rings cleared to win the run outright. The jackpot of the original cabinet. */
+  victoryRing: 66,
   /** Outer edge, just clear of the tunnel wall so it never z-fights. */
   outerRadius: 4.95,
   /**
@@ -113,6 +115,47 @@ export const RINGS = {
   reachSafety: 0.62,
   /** Gates are recycled once they are this far behind the camera. */
   despawnZ: 6,
+};
+
+/**
+ * Scoring weights.
+ *
+ * Rings are the headline number the cabinet is built around; the score is the
+ * tiebreaker between two runs that ended on the same ring. Distance is what
+ * separates them, so it is weighted low enough that a cleared gate is always
+ * worth more than the stretch of tunnel leading to it.
+ */
+export const SCORE = {
+  /** Points per world unit flown. At cruise speed, ~34 points per second. */
+  perDistanceUnit: 1,
+  /** Points for clearing a single gate, before any milestone bonus. */
+  perRing: 250,
+};
+
+/**
+ * Reward milestones, ascending. The redemption-ticket ladder of the original
+ * cabinet: a small prize early enough that a first run can reach it, and a
+ * jackpot at the ring that ends the game.
+ */
+export const REWARD_TIERS = [
+  { rings: 10, label: "Small prize", bonus: 1000 },
+  { rings: 30, label: "Big prize", bonus: 5000 },
+  { rings: RINGS.victoryRing, label: "Jackpot", bonus: 25000 },
+];
+
+/**
+ * The ship's hitbox, as half-extents around its centre.
+ *
+ * Both sit a little under the hull's true size. An arcade game should never
+ * kill a pass that looked clean, and the gap markers are the only edge the
+ * player can actually judge, so the ship is modelled slightly smaller than it
+ * is drawn rather than the gap slightly wider than it is drawn.
+ */
+export const COLLISION = {
+  /** Radians. The hull spans ~0.134 rad at the ride radius. */
+  playerHalfAngle: 0.12,
+  /** World units along Z. The saucer is ~0.55 deep from its centre. */
+  playerHalfDepth: 0.4,
 };
 
 /** Camera chase drift: a hint of parallax without losing the vanishing point. */

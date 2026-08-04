@@ -58,7 +58,11 @@ src/
     Game.js           State machine, scene setup, frame loop
     Input.js          Stateful keyboard handler
     Player.js         Angular player state + UFO mesh
-    constants.js      Shared world, player, and camera tuning
+    Tunnel.js         Scrolling tunnel shell: wall, rails, recycling hoops
+    Obstacles.js      Ring gate spawning, motion, recycling, and meshes
+    Collision.js      Angular math, ring clearing, and run-ending hits
+    Score.js          Run scoring, reward tiers, persistent local best
+    constants.js      Shared world, player, gate, score, and camera tuning
     tunnelMath.js     Polar helpers and framerate-independent easing
 ```
 
@@ -68,16 +72,45 @@ Phases follow [docs/main/02_Phased_Implementation_Plan.md](docs/main/02_Phased_I
 
 - [x] Phase 1 — project skeleton and render loop
 - [x] Phase 2 — input, player model, angular movement
-- [ ] Phase 3 — moving tunnel environment
-- [ ] Phase 4 — ring obstacles
-- [ ] Phase 5 — collision, ring clearing, run end
-- [ ] Phase 6 — score, UI overlay, local best
+- [x] Phase 3 — moving tunnel environment
+- [x] Phase 4 — ring obstacles
+- [x] Phase 5 — collision, ring clearing, run end
+- [x] Phase 6 — score, UI overlay, local best
 - [ ] Phase 7 — difficulty progression
 - [ ] Phase 8 — collectibles and warp meter
 - [ ] Phase 9 — visual and audio polish
 - [ ] Phase 10 — usability, accessibility, performance
 - [ ] Phase 11 — manual QA and release candidate
 
-The player ship flies the tunnel wall, but the environment is still a row of
-placeholder wireframe rings used as a depth reference; Phases 3–4 replace them
-with the moving tunnel and ring gates.
+The ring-survival loop is playable end to end: gates spawn ahead with a single
+safe gap, flying through one increments the ring counter, clipping one ends the
+run, and clearing 66 wins. The difficulty ramp arrives in Phase 7, so every gate
+currently has the same width, spacing, and speed.
+
+## Scoring
+
+Rings cleared are the run's result; the score ranks two runs that ended on the
+same ring. Both are tracked against their own best, so a long cautious run and a
+short lucky one each keep their record — see [Score.js](src/game/Score.js).
+
+| Source          | Points                                    |
+| --------------- | ----------------------------------------- |
+| Distance flown  | 1 per world unit (~34/s at cruise speed)  |
+| Gate cleared    | 250                                       |
+| Ring 10 — small prize | 1,000 bonus                         |
+| Ring 30 — big prize   | 5,000 bonus                         |
+| Ring 66 — jackpot     | 25,000 bonus                        |
+
+The best result is stored in `localStorage` under `tunnelwarp.best.v1`. Storage
+is probed with a real write at startup, because private-browsing modes hand back
+a storage object that only throws on use. Every read and write is guarded: if
+storage is unavailable, corrupt, or refuses writes, the run is unaffected, the
+best still tracks within the session, and the start screen says it will not be
+saved.
+
+Collision is polar arithmetic, not mesh intersection — see
+[Collision.js](src/game/Collision.js). A gate is a Z band plus a gap centre and
+width; the ship is a fixed Z with an angular and a depth half-extent from
+`COLLISION` in [constants.js](src/game/constants.js). Gates are tested against
+the Z span they swept during the frame, so a long frame cannot let one jump the
+ship.

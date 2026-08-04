@@ -106,9 +106,9 @@ class RingView {
 /**
  * Spawns, moves, and recycles the ring gates.
  *
- * `rings` is a plain data list — Z, angles, and flags only — so Phase 5 can do
- * collision with polar arithmetic instead of mesh intersection. Each record
- * carries its `view`, which is the one place a mesh is mentioned.
+ * `rings` is a plain data list — Z, angles, and flags only — so `Collision` can
+ * work in polar arithmetic instead of mesh intersection. Each record carries
+ * its `view`, which is the one place a mesh is mentioned.
  *
  * Gaps are chained: a new gate's gap can only sit within the angular distance
  * the player could actually cover since the previous gate, so a generated run
@@ -163,17 +163,15 @@ export class Obstacles {
     const dz = this._speed * delta;
 
     for (const ring of this.rings) {
+      // Collision tests the span the gate swept, not just where it landed, so
+      // the Z it came from has to survive the move.
+      ring.prevZ = ring.z;
       ring.z += dz;
 
       if (ring.rotationSpeed !== 0) {
         ring.gapCenterTheta = normalizeAngle(
           ring.gapCenterTheta + ring.rotationSpeed * delta,
         );
-      }
-
-      // Phase 5 reads this flag to score the pass and end the run on a miss.
-      if (!ring.passed && ring.z > WORLD.playerZ + ring.thickness / 2) {
-        ring.passed = true;
       }
 
       ring.view.sync(ring);
@@ -222,6 +220,7 @@ export class Obstacles {
     ring.id = this._nextId++;
     ring.index = ++this._spawnCount;
     ring.z = z;
+    ring.prevZ = z;
     ring.radius = RINGS.outerRadius;
     ring.thickness = RINGS.thickness;
     ring.gapStartLane = this._gapStartLaneFor(target, gapLanes);
@@ -283,6 +282,8 @@ export class Obstacles {
       id: 0,
       index: 0,
       z: 0,
+      /** Z at the start of the current frame; the other end of the sweep. */
+      prevZ: 0,
       radius: RINGS.outerRadius,
       thickness: RINGS.thickness,
       gapCenterTheta: 0,
@@ -292,6 +293,7 @@ export class Obstacles {
       /** Angle the wedges were laid out at; `gapCenterTheta` drifts from it. */
       layoutTheta: 0,
       rotationSpeed: 0,
+      /** Owned by `Collision`: set once the gate is safely behind the ship. */
       passed: false,
       view,
     };

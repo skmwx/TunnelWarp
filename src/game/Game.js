@@ -1,16 +1,15 @@
 import * as THREE from "three";
 
-import { CAMERA, SPEED, WORLD } from "./constants.js";
+import { createRunResult, resolveRings } from "./Collision.js";
+import { CAMERA, REWARD_TIERS, RINGS, SPEED, WORLD } from "./constants.js";
 import { Input } from "./Input.js";
 import { Obstacles } from "./Obstacles.js";
 import { Player, PlayerView } from "./Player.js";
+import { formatScore, nextRewardTier, Score } from "./Score.js";
 import { Tunnel } from "./Tunnel.js";
 import { damp } from "./tunnelMath.js";
 
-/**
- * Game states. Phase 1 wires up the full set even though only `loading`,
- * `ready` and `playing` are reachable until collision handling lands.
- */
+/** Game states. Every one of them is reachable. */
 export const GameState = {
   LOADING: "loading",
   READY: "ready",
@@ -25,28 +24,110 @@ export { WORLD } from "./constants.js";
 /** Long frames (tab switches, breakpoints) must not teleport the world. */
 const MAX_DELTA = 1 / 20;
 
+/**
+ * Overlay text per state.
+ *
+ * Any field may be a function of the game, for copy that depends on the run.
+ * `stats` shows the end-of-run result panel; `reward` is the milestone line
+ * under it.
+ */
 const OVERLAY_COPY = {
   [GameState.LOADING]: {
     title: "TunnelWarp",
     body: "Preparing the tunnel…",
     hint: "",
+    stats: false,
   },
   [GameState.READY]: {
     title: "TunnelWarp",
-    body: "Fly the ring gauntlet. Ring 66 is the jackpot.",
+    body: `Fly the ring gauntlet. Ring ${RINGS.victoryRing} is the jackpot.`,
     hint: "Press Space or Enter to launch",
+    reward: rewardLadder,
+    stats: false,
   },
   [GameState.GAME_OVER]: {
     title: "Run Over",
-    body: "",
+    body: (game) =>
+      game.ringsCleared === 0
+        ? "No rings cleared. Line up with the lit gap before the gate arrives."
+        : `${ringCount(game.ringsCleared)} cleared.`,
     hint: "Press Space to fly again",
+    reward: rewardResult,
+    stats: true,
   },
   [GameState.VICTORY]: {
-    title: "Ring 66",
-    body: "Jackpot cleared.",
+    title: `Ring ${RINGS.victoryRing}`,
+    body: (game) => `Jackpot. ${ringCount(game.ringsCleared)} cleared clean.`,
     hint: "Press Space to fly again",
+    reward: rewardResult,
+    stats: true,
   },
 };
+
+/** Resolves an overlay field that may be either a literal or a function. */
+function copyText(field, game) {
+  if (typeof field === "function") return field(game);
+  return field ?? "";
+}
+
+function ringCount(rings) {
+  return `${rings} ring${rings === 1 ? "" : "s"}`;
+}
+
+/** The milestone ladder, shown before a run so the targets are known upfront. */
+function rewardLadder(game) {
+  const ladder = REWARD_TIERS.map(
+    (tier) => `Ring ${tier.rings} ${tier.label.toLowerCase()}`,
+  ).join("  ·  ");
+
+  // Being told the best result is not saved beats silently losing it.
+  return game.score.persistent
+    ? ladder
+    : `${ladder}  —  best result can't be saved in this browser.`;
+}
+
+/** What the finished run earned, or how far the next milestone still is. */
+function rewardResult(game) {
+  const result = game.score.lastResult;
+  if (!result) return "";
+
+  if (result.tier) {
+    return `${result.tier.label} banked at Ring ${result.tier.rings}.`;
+  }
+
+  const next = nextRewardTier(result.rings);
+  if (!next) return "";
+
+  const remaining = next.rings - result.rings;
+  return `${ringCount(remaining)} short of the ${next.label.toLowerCase()} at Ring ${next.rings}.`;
+}
+
+/** The "you beat your own record" line, or `""` when this run did not. */
+function bestBadge(game) {
+  const result = game.score.lastResult;
+  if (!result) return "";
+
+  if (result.ringsBeat && result.scoreBeat) return "New personal best";
+  if (result.ringsBeat) return "New ring record";
+  if (result.scoreBeat) return "New high score";
+  return "";
+}
+
+/** The forward speed each state settles at. */
+function speedTargetFor(state) {
+  switch (state) {
+    case GameState.PLAYING:
+      return SPEED.base;
+    // A finished run holds still. The gate that ended it stays sitting on the
+    // ship, which is the clearest possible read of what just happened.
+    case GameState.GAME_OVER:
+    case GameState.VICTORY:
+      return 0;
+    // Menus keep a slow drift so the scene never looks frozen before a run.
+    default:
+      return SPEED.idle;
+  }
+}
 
 export class Game {
   /**
@@ -64,12 +145,19 @@ export class Game {
     this.playerView = new PlayerView();
     this.tunnel = new Tunnel();
     this.obstacles = new Obstacles();
+    this.score = new Score();
 
     /** Seconds of simulated flight in the current run. */
     this.elapsed = 0;
-    this.ringsCleared = 0;
     /** Current forward speed; the world scrolls past the player at this rate. */
     this.speed = SPEED.idle;
+
+    /** Reused every frame so collision resolution allocates nothing. */
+    this._runResult = createRunResult();
+    /** Last values written to the HUD; the DOM is only touched on a change. */
+    this._hudRings = -1;
+    this._hudScore = -1;
+    this._hudBest = -1;
 
     this._lastFrameTime = 0;
     this._frameHandle = 0;
@@ -83,6 +171,11 @@ export class Game {
 
     window.addEventListener("resize", this._onResize);
     this._onResize();
+  }
+
+  /** Rings cleared in the current run. `Score` is the source of truth. */
+  get ringsCleared() {
+    return this.score.rings;
   }
 
   /** Boots the render loop and hands control to the player. */
@@ -100,6 +193,11 @@ export class Game {
 
     if (next === GameState.PLAYING) {
       this._resetRun();
+    } else if (next === GameState.GAME_OVER || next === GameState.VICTORY) {
+      this._freezeWorld();
+      // Settles the result before the overlay renders it, so the panel and the
+      // stored best are read from the same commit.
+      this.score.commit();
     }
 
     this._renderUI();
@@ -182,18 +280,55 @@ export class Game {
 
     if (this.state === GameState.PLAYING) {
       this.elapsed += delta;
+      // Distance is scored off the actual speed, so the launch ramp is worth
+      // less than cruising and Phase 7's faster rings are worth more.
+      this.score.addDistance(this.speed * delta);
       this.player.update(delta, this.input.axis);
-      this.obstacles.update(delta);
     }
 
-    // The tunnel scrolls in every state: at cruise speed during a run, and at
-    // an idle drift behind the menus so the scene never looks frozen.
+    // The world scrolls in every state: at cruise speed during a run, and at an
+    // idle drift behind the menus so the scene never looks frozen. Only the
+    // consequences are gated on `playing`.
     this.tunnel.update(delta);
+    this.obstacles.update(delta);
+
+    if (this.state === GameState.PLAYING) {
+      this._resolveRun();
+    }
 
     // Synced in every state so the ship keeps its idle spin and settles its
     // bank after a run ends.
     this.playerView.sync(this.player, delta);
     this._updateCamera(delta);
+    // The score moves every frame of a run, so the HUD is a per-frame concern;
+    // each field is guarded against writing an unchanged value.
+    this._syncHud();
+  }
+
+  /**
+   * Scores the gates the ship has finished with and ends the run if one of
+   * them was a miss. Runs after everything has moved, so a gate is judged
+   * against the pose the player actually flew it with.
+   */
+  _resolveRun() {
+    const result = resolveRings(
+      this.obstacles.rings,
+      this.player,
+      this._runResult,
+    );
+
+    if (result.cleared > 0) {
+      this.score.addRings(result.cleared);
+    }
+
+    if (result.hit) {
+      this.setState(GameState.GAME_OVER);
+      return;
+    }
+
+    if (this.ringsCleared >= RINGS.victoryRing) {
+      this.setState(GameState.VICTORY);
+    }
   }
 
   /**
@@ -202,7 +337,7 @@ export class Game {
    * flat cruise target with the difficulty curve.
    */
   _updateSpeed(delta) {
-    const target = this.state === GameState.PLAYING ? SPEED.base : SPEED.idle;
+    const target = speedTargetFor(this.state);
 
     this.speed = damp(this.speed, target, SPEED.response, delta);
     this.tunnel.setSpeed(this.speed);
@@ -248,11 +383,21 @@ export class Game {
     this.camera.lookAt(0, 0, WORLD.spawnZ);
   }
 
+  /**
+   * Stops the world dead on the frame a run ends, instead of coasting to the
+   * state's target. A crash should read as an impact, not a slow fade.
+   */
+  _freezeWorld() {
+    this.speed = 0;
+    this.tunnel.setSpeed(0);
+    this.obstacles.setSpeed(0);
+  }
+
   _resetRun() {
     this.elapsed = 0;
-    this.ringsCleared = 0;
     this.speed = SPEED.idle;
 
+    this.score.reset();
     this.player.reset();
     this.tunnel.reset();
     this.obstacles.setSpeed(SPEED.base);
@@ -261,20 +406,70 @@ export class Game {
 
   // --- Presentation ------------------------------------------------------
 
+  /**
+   * Rewrites the overlay for the current state. Called on every transition, so
+   * what is on screen is always the state the game is actually in.
+   */
   _renderUI() {
-    const { overlay, overlayTitle, overlayBody, overlayHint, rings } = this.ui;
+    const ui = this.ui;
 
     if (this.state === GameState.PLAYING) {
-      overlay.hidden = true;
-    } else {
-      const copy = OVERLAY_COPY[this.state];
-      overlay.hidden = false;
-      overlayTitle.textContent = copy.title;
-      overlayBody.textContent = copy.body;
-      overlayHint.textContent = copy.hint;
+      ui.overlay.hidden = true;
+      this._syncHud();
+      return;
     }
 
-    rings.textContent = String(this.ringsCleared);
+    const copy = OVERLAY_COPY[this.state];
+    ui.overlay.hidden = false;
+    ui.overlayTitle.textContent = copy.title;
+    ui.overlayBody.textContent = copyText(copy.body, this);
+    ui.overlayHint.textContent = copyText(copy.hint, this);
+
+    const badge = bestBadge(this);
+    ui.overlayBadge.textContent = badge;
+    ui.overlayBadge.hidden = badge === "";
+
+    const reward = copyText(copy.reward, this);
+    ui.overlayReward.textContent = reward;
+    ui.overlayReward.hidden = reward === "";
+
+    ui.overlayStats.hidden = !copy.stats;
+    if (copy.stats) {
+      ui.statRings.textContent = String(this.score.rings);
+      ui.statScore.textContent = formatScore(this.score.score);
+      ui.statBest.textContent = String(this.score.best.rings);
+    }
+
+    this._syncHud();
+  }
+
+  /**
+   * Writes the live HUD readouts. Called every frame; each field skips the DOM
+   * on the frames its value is unchanged.
+   */
+  _syncHud() {
+    const { rings, score } = this.score;
+    const best = this.score.best.rings;
+
+    if (this._hudRings !== rings) {
+      this._hudRings = rings;
+      this.ui.rings.textContent = String(rings);
+
+      // The tier only ever changes on a ring, so it rides the same guard.
+      const tier = this.score.tier;
+      this.ui.tier.textContent = tier ? tier.label : "";
+      this.ui.tier.hidden = tier === null;
+    }
+
+    if (this._hudScore !== score) {
+      this._hudScore = score;
+      this.ui.score.textContent = formatScore(score);
+    }
+
+    if (this._hudBest !== best) {
+      this._hudBest = best;
+      this.ui.best.textContent = String(best);
+    }
   }
 
   _onResize() {
