@@ -59,9 +59,17 @@ function contactHalfDepth(ring) {
   return ring.thickness / 2 + COLLISION.playerHalfDepth;
 }
 
-/** Creates the reusable record `resolveRings` writes its outcome into. */
+/**
+ * Creates the reusable record `resolveRings` writes its outcome into.
+ *
+ * `lastCleared` is the gate behind the final increment of `cleared`, so the
+ * caller can put feedback on the object the player just flew through. The last
+ * rather than a list of them: clearing two gates in one frame takes a frame
+ * longer than the tightest gate spacing in the game, and if it ever happened
+ * the pulse belongs on the nearer one anyway.
+ */
 export function createRunResult() {
-  return { cleared: 0, hit: null };
+  return { cleared: 0, hit: null, lastCleared: null };
 }
 
 /**
@@ -88,6 +96,7 @@ export function createRunResult() {
 export function resolveRings(rings, player, result, invulnerable = false) {
   result.cleared = 0;
   result.hit = null;
+  result.lastCleared = null;
 
   for (const ring of rings) {
     if (ring.passed) continue;
@@ -117,6 +126,7 @@ export function resolveRings(rings, player, result, invulnerable = false) {
     if (ring.z > bandEnd) {
       ring.passed = true;
       result.cleared += 1;
+      result.lastCleared = ring;
     }
   }
 

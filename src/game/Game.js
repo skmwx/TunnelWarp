@@ -1,13 +1,28 @@
 import * as THREE from "three";
 
+import { AudioEngine } from "./Audio.js";
 import { Collectibles } from "./Collectibles.js";
 import { createRunResult, resolveRings } from "./Collision.js";
-import { CAMERA, REWARD_TIERS, RINGS, SPEED, WARP, WORLD } from "./constants.js";
+import {
+  CAMERA,
+  EFFECTS,
+  REWARD_TIERS,
+  RINGS,
+  SPEED,
+  WARP,
+  WORLD,
+} from "./constants.js";
 import { spacingFor, speedFor } from "./Difficulty.js";
+import { Effects } from "./Effects.js";
 import { Input } from "./Input.js";
 import { Obstacles } from "./Obstacles.js";
 import { Player, PlayerView } from "./Player.js";
-import { formatScore, nextRewardTier, Score } from "./Score.js";
+import {
+  formatScore,
+  milestoneBetween,
+  nextRewardTier,
+  Score,
+} from "./Score.js";
 import { Tunnel } from "./Tunnel.js";
 import { clamp, damp } from "./tunnelMath.js";
 
@@ -125,6 +140,20 @@ const WARP_LABEL = {
   active: "Warping",
 };
 
+/**
+ * Colours of the full-screen flash, per event.
+ *
+ * The screen blends them over the scene, so each one is a light being thrown
+ * rather than a sheet being drawn: the tunnel and the next gate stay readable
+ * even at the peak of the crash flash.
+ */
+const FLASH_COLOR = {
+  crash: "rgb(255, 74, 96)",
+  warp: "rgb(150, 235, 255)",
+  milestone: "rgb(255, 214, 140)",
+  victory: "rgb(255, 244, 214)",
+};
+
 /** The forward speed the game settles at, given its state and progress. */
 function speedTargetFor(state, rings, warping) {
   switch (state) {
@@ -162,6 +191,9 @@ export class Game {
     this.obstacles = new Obstacles();
     this.collectibles = new Collectibles();
     this.score = new Score();
+    this.effects = new Effects();
+    // Silent until the player's first key or click; see `Audio.js`.
+    this.audio = new AudioEngine();
 
     /** Seconds of simulated flight in the current run. */
     this.elapsed = 0;
@@ -185,6 +217,18 @@ export class Game {
     this._hudBest = -1;
     this._hudWarpFill = -1;
     this._hudWarpState = "";
+    this._hudMuted = null;
+
+    /** Full-screen flash: how bright it still is, and what threw it. */
+    this._flashLevel = 0;
+    this._flashKind = "";
+    this._hudFlash = -1;
+    /** Seconds the milestone banner has left on screen. */
+    this._milestoneTimer = 0;
+
+    /** Camera chase position, before shake is added on top. */
+    this._cameraX = 0;
+    this._cameraY = 0;
 
     this._lastFrameTime = 0;
     this._frameHandle = 0;
@@ -192,11 +236,14 @@ export class Game {
 
     this._onResize = this._onResize.bind(this);
     this._tick = this._tick.bind(this);
+    this._onMuteClick = this._onMuteClick.bind(this);
 
     this._initRenderer();
     this._initScene();
 
     window.addEventListener("resize", this._onResize);
+    this.ui.mute.addEventListener("click", this._onMuteClick);
+    this._syncMute();
     this._onResize();
   }
 
@@ -232,19 +279,50 @@ export class Game {
       // Settles the result before the overlay renders it, so the panel and the
       // stored best are read from the same commit.
       this.score.commit();
+      this._celebrateEnd(next);
     }
 
     this._renderUI();
+  }
+
+  /**
+   * The moment a run ends, in the frame it ends on.
+   *
+   * A crash is one hard impact — shake, burst, a red flash, a punchy fail —
+   * because the player needs to know instantly that the run is over and why.
+   * Ring 66 is the opposite: the fanfare and the shower run long enough to be
+   * the moment the whole cabinet is built toward.
+   */
+  _celebrateEnd(state) {
+    const { theta, z } = this.player;
+
+    if (state === GameState.VICTORY) {
+      this.audio.victory();
+      // Two showers at different depths rather than one dense one at the ship:
+      // the tunnel is the stage, and the jackpot should fill it.
+      this.effects.cheer(z);
+      this.effects.cheer(z - 14);
+      this._flash("victory");
+      return;
+    }
+
+    this.audio.crash();
+    this.effects.burst(theta, z);
+    this.effects.shake(EFFECTS.shake.crash);
+    this._flash("crash");
   }
 
   dispose() {
     this._running = false;
     cancelAnimationFrame(this._frameHandle);
     window.removeEventListener("resize", this._onResize);
+    this.ui.mute.removeEventListener("click", this._onMuteClick);
     this.input.dispose();
+    this.audio.dispose();
     this.tunnel.dispose();
     this.obstacles.dispose();
     this.collectibles.dispose();
+    this.effects.dispose();
     this.renderer.dispose();
   }
 
@@ -292,6 +370,7 @@ export class Game {
     this.scene.add(this.tunnel.object3D);
     this.scene.add(this.obstacles.object3D);
     this.scene.add(this.collectibles.object3D);
+    this.scene.add(this.effects.object3D);
 
     this.scene.add(this.playerView.object3D);
     this.playerView.sync(this.player, 0);
@@ -312,6 +391,7 @@ export class Game {
 
   _update(delta) {
     this._handleAction();
+    if (this.input.consumeMute()) this._toggleMute();
     this._updateSpeed(delta);
 
     if (this.state === GameState.PLAYING) {
@@ -320,6 +400,7 @@ export class Game {
       // less than cruising and the late, faster rings are worth more.
       this.score.addDistance(this.speed * delta);
       this.player.update(delta, this.input.axis);
+      this.effects.trail(this.player, delta, this.speed, this.warpBlend);
     }
 
     // The world scrolls in every state: at cruise speed during a run, and at an
@@ -338,12 +419,20 @@ export class Game {
     }
 
     // Synced in every state so the ship keeps its idle spin and settles its
-    // bank after a run ends.
+    // bank after a run ends. Motes ride the world at its current speed, so a
+    // crash freezes the trail in place and leaves only the burst moving.
     this._updateWarpView(delta);
     this.playerView.sync(this.player, delta, this.warpBlend);
+    this.effects.update(delta, this.speed);
     this._updateCamera(delta);
+    this.audio.setFlight(
+      this.state === GameState.PLAYING,
+      this.speed,
+      this.warpBlend,
+    );
     // The score moves every frame of a run, so the HUD is a per-frame concern;
     // each field is guarded against writing an unchanged value.
+    this._updateFeedbackUI(delta);
     this._syncHud();
   }
 
@@ -361,7 +450,9 @@ export class Game {
     );
 
     if (result.cleared > 0) {
+      const before = this.ringsCleared;
       this.score.addRings(result.cleared);
+      this._onRingsCleared(before, result.lastCleared);
     }
 
     if (result.hit) {
@@ -374,10 +465,40 @@ export class Game {
     }
   }
 
+  /**
+   * Confirms a cleared gate, in three places at once: the gate lights up, the
+   * ring count bumps, and the chime steps a rung up its ladder. Three because
+   * the player's eyes are on the tunnel, not the HUD — the sound and the gate
+   * carry the moment, and the number is what they check afterwards.
+   *
+   * @param {number} before Rings cleared before this frame's gates were scored.
+   * @param {object|null} ring The gate behind the last of them.
+   */
+  _onRingsCleared(before, ring) {
+    const rings = this.ringsCleared;
+
+    this.audio.ringClear(rings);
+    if (ring) this.obstacles.flash(ring);
+    this._bumpRings();
+
+    const tier = milestoneBetween(before, rings);
+    // The jackpot is also the victory, and the victory screen is a bigger
+    // celebration of the same moment; two at once would step on each other.
+    if (!tier || tier.rings >= RINGS.victoryRing) return;
+
+    this.audio.milestone(REWARD_TIERS.indexOf(tier));
+    this.effects.cheer(this.player.z - EFFECTS.cheerLead);
+    this.effects.shake(EFFECTS.shake.milestone);
+    this._flash("milestone");
+    this._showMilestone(tier);
+  }
+
   /** Banks the warp orbs the ship swept up this frame. */
   _collectEnergy() {
     const collected = this.collectibles.collect(this.player);
     if (collected === 0) return;
+
+    const wasFull = this.warpCharge >= 1;
 
     this.score.addOrbs(collected);
     this.warpCharge = clamp(
@@ -385,6 +506,13 @@ export class Game {
       0,
       1,
     );
+
+    this.audio.orb(collected);
+    this.effects.sparkle(this.player.theta, this.player.z);
+
+    // The meter filling is the one thing in the game the player has to act on,
+    // and it happens while they are looking at a gate. It gets its own cue.
+    if (!wasFull && this.warpCharge >= 1) this.audio.warpReady();
   }
 
   /**
@@ -397,6 +525,10 @@ export class Game {
     this.warpCharge = 0;
     this.warpActive = true;
     this.warpTimer = WARP.duration;
+
+    this.audio.warp();
+    this.effects.shake(EFFECTS.shake.warp);
+    this._flash("warp");
   }
 
   /**
@@ -503,24 +635,29 @@ export class Game {
    * The camera drifts a fraction of the player's offset. Enough parallax to
    * keep the ship legible against the wall it rides, small enough that the
    * tunnel's vanishing point stays centred.
+   *
+   * Shake is added on top of the chase position rather than into it: damping
+   * toward a position that already contains the jitter would feed the shake
+   * back into itself and leave the camera drifting off-centre after it settles.
    */
   _updateCamera(delta) {
     const { x, y } = this.player.position;
-    const targetX = x * CAMERA.followAmount;
-    const targetY = y * CAMERA.followAmount;
 
-    this.camera.position.x = damp(
-      this.camera.position.x,
-      targetX,
+    this._cameraX = damp(
+      this._cameraX,
+      x * CAMERA.followAmount,
       CAMERA.followResponse,
       delta,
     );
-    this.camera.position.y = damp(
-      this.camera.position.y,
-      targetY,
+    this._cameraY = damp(
+      this._cameraY,
+      y * CAMERA.followAmount,
       CAMERA.followResponse,
       delta,
     );
+
+    this.camera.position.x = this._cameraX + this.effects.shakeX;
+    this.camera.position.y = this._cameraY + this.effects.shakeY;
     this.camera.lookAt(0, 0, WORLD.spawnZ);
   }
 
@@ -538,6 +675,12 @@ export class Game {
   _resetRun() {
     this.elapsed = 0;
     this.speed = SPEED.idle;
+
+    // The previous run's wreckage and its last milestone do not belong to this
+    // one. The flash is left alone: it is already most of the way to nothing,
+    // and cutting it dead would make a restart blink.
+    this.effects.reset();
+    this._hideMilestone();
 
     this.warpCharge = 0;
     this.warpActive = false;
@@ -658,6 +801,95 @@ export class Game {
       this._hudWarpFill = fill;
       this.ui.warpFill.style.width = `${fill}%`;
     }
+  }
+
+  /**
+   * Runs down the two pieces of UI feedback that live on a timer of their own:
+   * the full-screen flash, and the milestone banner.
+   */
+  _updateFeedbackUI(delta) {
+    if (this._milestoneTimer > 0) {
+      this._milestoneTimer -= delta;
+      if (this._milestoneTimer <= 0) this._hideMilestone();
+    }
+
+    if (this._flashLevel > 0) {
+      this._flashLevel *= Math.exp(-EFFECTS.flash.decay * delta);
+      // Snapped out rather than left to approach zero forever, so the element
+      // goes fully inert between events instead of holding a blend it costs
+      // something to composite.
+      if (this._flashLevel < 0.004) this._flashLevel = 0;
+    }
+
+    // Hundredths: finer than the eye reads through a screen blend, and it keeps
+    // the write out of most frames of the fade.
+    const opacity = Math.round(this._flashLevel * 100) / 100;
+    if (this._hudFlash !== opacity) {
+      this._hudFlash = opacity;
+      this.ui.flash.style.opacity = String(opacity);
+    }
+  }
+
+  /**
+   * Throws the screen flash for an event.
+   *
+   * A dimmer event never cuts a brighter one short: the crash flash outlives
+   * the warp flash that may have been fading under it, so the last thing the
+   * screen says is always the thing that just ended the run.
+   */
+  _flash(kind) {
+    const level = EFFECTS.flash[kind];
+    if (level < this._flashLevel) return;
+
+    this._flashLevel = level;
+    if (this._flashKind !== kind) {
+      this._flashKind = kind;
+      this.ui.flash.style.backgroundColor = FLASH_COLOR[kind];
+    }
+  }
+
+  /** Pops the ring count, restarting the animation on every gate. */
+  _bumpRings() {
+    const el = this.ui.rings;
+    el.classList.remove("hud-value--bump");
+    // Reading a layout property flushes the removal, so re-adding the class in
+    // the same frame restarts the animation instead of being a no-op.
+    void el.offsetWidth;
+    el.classList.add("hud-value--bump");
+  }
+
+  _showMilestone(tier) {
+    this.ui.milestone.textContent = `${tier.label} · Ring ${tier.rings}`;
+    // Un-hiding puts the element back in the render tree, which restarts its
+    // entrance animation without the class dance the ring bump needs.
+    this.ui.milestone.hidden = false;
+    this._milestoneTimer = EFFECTS.milestoneHold;
+  }
+
+  _hideMilestone() {
+    this._milestoneTimer = 0;
+    this.ui.milestone.hidden = true;
+  }
+
+  _toggleMute() {
+    this.audio.toggleMute();
+    this._syncMute();
+  }
+
+  _onMuteClick() {
+    this._toggleMute();
+    // Otherwise the button keeps focus and the next Space is aimed at it rather
+    // than at the game.
+    this.ui.mute.blur();
+  }
+
+  _syncMute() {
+    const muted = this.audio.muted;
+    if (this._hudMuted === muted) return;
+
+    this._hudMuted = muted;
+    this.ui.mute.textContent = muted ? "Sound off" : "Sound on";
+    this.ui.mute.setAttribute("aria-pressed", muted ? "true" : "false");
   }
 
   _onResize() {

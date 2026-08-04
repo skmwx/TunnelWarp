@@ -58,6 +58,14 @@ export const PLAYER = {
   warpLamp: 1.4,
   /** Extra fraction of idle spin at full warp. */
   warpSpin: 2.5,
+  /**
+   * Lamps set into the saucer rim, alternating bright and dim. They ride the
+   * hull, so the idle spin turns them into a chase for free.
+   */
+  rimLights: 8,
+  /** Thruster plume length at rest, and the multiple warp stretches it to. */
+  thrusterLength: 0.55,
+  warpThruster: 4.5,
 };
 
 /**
@@ -140,6 +148,13 @@ export const RINGS = {
   reachSafety: 0.62,
   /** Gates are recycled once they are this far behind the camera. */
   despawnZ: 6,
+
+  /**
+   * The ring-clear pulse: a gate lights up and swells as the ship comes out the
+   * back of it. Fast enough to be over before the next gate needs reading.
+   */
+  flashDecay: 4,
+  flashScale: 0.07,
 };
 
 /**
@@ -300,4 +315,105 @@ export const CAMERA = {
   followAmount: 0.09,
   /** Exponential smoothing rate, per second. */
   followResponse: 3.5,
+};
+
+/**
+ * Feedback effects: the ship's trail, the sparks, the screen flash, and the
+ * camera shake.
+ *
+ * Every value here is a count, a duration, or a colour. The effects themselves
+ * live in `Effects.js`; the moments that fire them live in `Game.js`. Sizes are
+ * held down deliberately — an arcade tunnel game is won by reading the next
+ * gap, so nothing here is allowed to sit between the player and a gate for
+ * longer than the beat it is marking.
+ */
+export const EFFECTS = {
+  /**
+   * One shared pool backs the trail, the pickups, the crash, and the cheer.
+   * Sized for the worst case: a doubled wake at the speed cap, with a crash
+   * burst thrown on top of it.
+   */
+  particleCapacity: 380,
+  /**
+   * Mote diameter in world units. Wide enough that consecutive trail motes
+   * overlap into one glow at the speeds the game actually runs at — a stream of
+   * separated dots reads as debris, not as a wake.
+   */
+  particleSize: 0.26,
+
+  trail: {
+    /**
+     * World units of flight between motes, rather than seconds.
+     *
+     * Spacing the wake by distance is what keeps it looking the same at every
+     * speed: on a timer it would be a solid bar at launch and a line of beads
+     * at the speed cap. Held under the mote size, so consecutive motes overlap.
+     */
+    spacing: 0.16,
+    /** Seconds a mote lives; at speed, this is how far the wake reaches back. */
+    life: 0.32,
+    /** Radial and angular jitter, so the ribbon has body instead of being a line. */
+    spread: 0.07,
+    /** Inset from the ride radius: the trail streams out from under the hull. */
+    radiusOffset: -0.14,
+    /** Colour at rest, and where warp drags it. */
+    color: 0xff3ea5,
+    warpColor: 0xbfe9ff,
+    /**
+     * Extra motes per emission at full warp, so a warp leaves a thicker wake.
+     * Held at one: the wake is already dense, and a warp at the speed cap has
+     * to leave the pool room for whatever ends the run.
+     */
+    warpBurst: 1,
+  },
+
+  /** A collected orb: a small puff at the ship. */
+  sparkle: { count: 7, life: 0.35, speed: 3.4, drag: 3, color: 0x9ff4ff },
+
+  /** The crash: a hard burst thrown outward from the point of impact. */
+  burst: { count: 64, life: 0.9, speed: 13, drag: 2.2, color: 0xffa257 },
+
+  /** A milestone or the jackpot: a slower, brighter shower around the tunnel. */
+  cheer: { count: 44, life: 1.5, speed: 7, drag: 1.2, color: 0xffe6b0 },
+  /**
+   * World units ahead of the ship a mid-run cheer is thrown.
+   *
+   * A shower let off at the ship rides the world past the camera in a fifth of
+   * a second at cruise speed, which is not long enough to register as anything.
+   * Thrown down the tunnel instead, it is flown *through* — which is both
+   * visible for a second or so and a better reward than a puff behind you.
+   * The end-of-run cheers do not need it: the world is already stopped.
+   */
+  cheerLead: 26,
+
+  /** Camera shake, in world units of offset, and how fast it dies away. */
+  shake: { crash: 0.55, warp: 0.16, milestone: 0.22, decay: 7 },
+
+  /** Screen-flash opacity per event, and the decay rate they all share. */
+  flash: { crash: 0.42, warp: 0.26, milestone: 0.24, victory: 0.5, decay: 4 },
+
+  /** Seconds a milestone banner holds before it clears itself. */
+  milestoneHold: 1.9,
+};
+
+/**
+ * Audio.
+ *
+ * Every sound is synthesised at runtime, so there is no asset pipeline and
+ * nothing to load — see `Audio.js`. Envelopes and voicings stay in that module;
+ * what is tuned here is only what the rest of the game can hear itself in: the
+ * output level, the ladder the ring chime climbs as the count rises, and the
+ * engine drone that tracks forward speed.
+ */
+export const AUDIO = {
+  /** Master output level. Leaves headroom for several overlapping one-shots. */
+  masterGain: 0.5,
+  /** Root of the pentatonic ladder the ring chime climbs, in Hz. */
+  ringRootHz: 262,
+  /** Ladder steps spanning Ring 1 to the victory ring: three octaves of climb. */
+  ringSteps: 15,
+  /** Engine drone at the slowest and the fastest the ship ever flies. */
+  droneHz: { start: 42, end: 96 },
+  droneGain: 0.09,
+  warpDroneGain: 0.16,
 };

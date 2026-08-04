@@ -21,6 +21,9 @@ const ui = {
   warp: document.getElementById("hud-warp"),
   warpFill: document.getElementById("hud-warp-fill"),
   warpLabel: document.getElementById("hud-warp-label"),
+  flash: document.getElementById("flash"),
+  milestone: document.getElementById("milestone"),
+  mute: document.getElementById("mute"),
 };
 
 const game = new Game({ canvas, ui });

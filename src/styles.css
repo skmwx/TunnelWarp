@@ -47,6 +47,33 @@ body {
   user-select: none;
 }
 
+/* Full-screen event flash. Colour and opacity come from the game loop.
+
+   Two things keep it from burying the game it is reacting to: `screen`, so it
+   lights the scene rather than fogging it, and a mask that holds it back at the
+   centre of the frame. The centre is where the vanishing point, the next gate,
+   and the end-of-run panel all live — so the flash slams the edges of the
+   screen and leaves the thing being read alone. */
+.flash {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  background-color: #ffffff;
+  mix-blend-mode: screen;
+  -webkit-mask-image: radial-gradient(
+    ellipse 62% 62% at 50% 50%,
+    rgba(0, 0, 0, 0.1) 0%,
+    rgba(0, 0, 0, 0.55) 55%,
+    #000 100%
+  );
+  mask-image: radial-gradient(
+    ellipse 62% 62% at 50% 50%,
+    rgba(0, 0, 0, 0.1) 0%,
+    rgba(0, 0, 0, 0.55) 55%,
+    #000 100%
+  );
+}
+
 /* Equal outer columns so the score stays optically centred no matter how wide
    the ring and best readouts get. */
 .hud {
@@ -94,6 +121,51 @@ body {
   font-size: clamp(17px, 2.9vh, 29px);
   color: var(--text);
   text-shadow: 0 0 12px rgba(232, 246, 255, 0.3);
+}
+
+/* A cleared ring bumps the count, so the number acknowledges the gate on the
+   frame it is cleared rather than just quietly incrementing. */
+.hud-value--bump {
+  animation: hud-bump 380ms ease-out;
+}
+
+@keyframes hud-bump {
+  0% {
+    transform: scale(1);
+  }
+  28% {
+    transform: scale(1.22);
+    text-shadow: 0 0 26px rgba(70, 240, 255, 0.95);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* The mute toggle is the one thing on the overlay a pointer can reach. */
+.mute {
+  pointer-events: auto;
+  margin-top: 8px;
+  padding: 4px 11px;
+  border: 1px solid rgba(70, 240, 255, 0.35);
+  border-radius: 999px;
+  background: rgba(4, 3, 13, 0.5);
+  color: rgba(232, 246, 255, 0.72);
+  font: inherit;
+  font-size: clamp(9px, 1.2vh, 12px);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.mute:hover {
+  border-color: rgba(70, 240, 255, 0.65);
+  color: var(--text);
+}
+
+.mute[aria-pressed="true"] {
+  border-color: rgba(232, 246, 255, 0.2);
+  color: rgba(232, 246, 255, 0.42);
 }
 
 /* Reward milestone the current run has banked. Absent until Ring 10. */
@@ -173,6 +245,51 @@ body {
   color: var(--text);
   letter-spacing: 0.26em;
   text-shadow: 0 0 14px rgba(232, 246, 255, 0.6);
+}
+
+/* Milestone banner. Sits under the HUD rather than over the vanishing point,
+   so a reward never lands on top of the next gate. Shown by clearing `hidden`,
+   which restarts the animation for free, and cleared by the game after
+   `EFFECTS.milestoneHold`. */
+.milestone {
+  position: absolute;
+  top: clamp(84px, 15vh, 170px);
+  left: 50%;
+  margin: 0;
+  padding: 7px 22px;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  border: 1px solid rgba(255, 230, 176, 0.5);
+  border-radius: 999px;
+  background: rgba(4, 3, 13, 0.55);
+  font-size: clamp(13px, 2vh, 22px);
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: #ffe6b0;
+  text-shadow: 0 0 18px rgba(255, 230, 176, 0.65);
+  animation: milestone-pop 1.9s ease-out both;
+}
+
+@keyframes milestone-pop {
+  0% {
+    opacity: 0;
+    transform: translateX(-50%) scale(0.82);
+  }
+  12% {
+    opacity: 1;
+    transform: translateX(-50%) scale(1.06);
+  }
+  22% {
+    transform: translateX(-50%) scale(1);
+  }
+  78% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(-50%) scale(1);
+  }
 }
 
 .overlay {
@@ -297,13 +414,30 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
   .overlay-hint,
-  .hud-warp[data-state="ready"] .hud-warp-track {
+  .hud-warp[data-state="ready"] .hud-warp-track,
+  .hud-value--bump {
     animation: none;
+  }
+  /* The banner still has to appear and still has to leave; what goes is the
+     scaling, which is the part that moves. */
+  .milestone {
+    animation: milestone-fade 1.9s ease-out both;
   }
   .overlay {
     transition: none;
   }
   .hud-warp-fill {
     transition: none;
+  }
+}
+
+@keyframes milestone-fade {
+  0%,
+  100% {
+    opacity: 0;
+  }
+  8%,
+  85% {
+    opacity: 1;
   }
 }

@@ -24,6 +24,7 @@ the first load needs network access.
 | `ArrowLeft` / `A`  | Rotate left around the tunnel wall              |
 | `ArrowRight` / `D` | Rotate right                                    |
 | `Space` / `Enter`  | Start and restart; mid-run, fire a charged warp |
+| `M`                | Mute and unmute (or click the HUD sound toggle) |
 
 The ship rides the wall like a clock hand, so a direction key always turns the
 same way around the tube. The mapping is anchored to the starting pose: from the
@@ -63,7 +64,10 @@ src/
     Collectibles.js   Warp energy orbs: pod placement, motion, collection
     Difficulty.js     The ramp: speed, spacing, gap width, rotation, variants
     Collision.js      Angular math, ring clearing, run-ending hits, pickups
+    Effects.js        Pooled particles: trail, sparks, bursts, camera shake
+    Audio.js          Runtime-synthesised sound, unlocked on first input
     Score.js          Run scoring, reward tiers, persistent local best
+    storage.js        Guarded localStorage access shared by score and audio
     constants.js      Shared world, player, gate, score, and camera tuning
     tunnelMath.js     Polar helpers and framerate-independent easing
 ```
@@ -80,14 +84,15 @@ Phases follow [docs/main/02_Phased_Implementation_Plan.md](docs/main/02_Phased_I
 - [x] Phase 6 — score, UI overlay, local best
 - [x] Phase 7 — difficulty progression
 - [x] Phase 8 — collectibles and warp meter
-- [ ] Phase 9 — visual and audio polish
+- [x] Phase 9 — visual and audio polish
 - [ ] Phase 10 — usability, accessibility, performance
 - [ ] Phase 11 — manual QA and release candidate
 
 The ring-survival loop is playable end to end: gates spawn ahead with a safe
 gap, flying through one increments the ring counter, clipping one ends the run,
-and clearing 66 wins. Difficulty ramps across a run, and warp energy strung
-between the gates charges a warp — both are described below.
+and clearing 66 wins. Difficulty ramps across a run, warp energy strung between
+the gates charges a warp, and every beat of the loop answers back in sound and
+light — all described below.
 
 ## Difficulty
 
@@ -148,6 +153,53 @@ and makes every warp end on the same clean beat.
 
 The whole layer is optional. Ignoring every orb costs the bonus points and the
 warp, and nothing else.
+
+## Feedback
+
+Every beat of the loop answers back in the same frame it happens, in the place
+the player is already looking — the tunnel — with the HUD as the thing they
+check afterwards rather than the thing that tells them.
+
+| Moment            | Sight                                                      | Sound                              |
+| ----------------- | ---------------------------------------------------------- | ---------------------------------- |
+| Gate cleared      | the gate lights up and swells; the ring count pops          | chime, pitched by ring number      |
+| Orb collected     | a puff at the ship                                          | blip, climbing through the pod     |
+| Meter full        | the warp bar pulses                                         | two-note prompt                    |
+| Warp fired        | rim flash, wider FOV, white-out tunnel, thicker wake        | rising sweep under a whoosh        |
+| Ring 10 / 30      | banner, gold shower down the tunnel, rim flash              | arpeggio, one tier higher each     |
+| Crash             | camera shake, burst off the wall, red rim flash             | filtered impact, pitch collapsing  |
+| Ring 66           | gold flash, two showers down the tube                       | fanfare over a held chord          |
+
+Under all of it, an engine drone tracks forward speed and thickens during a
+warp, so the tunnel is audibly faster before the number says so.
+
+[Effects.js](src/game/Effects.js) runs the whole visual layer off one pooled
+`THREE.Points` field — the trail, the pickups, the crash, and the cheers — drawn
+in a single call and allocating nothing after construction. Motes fade by having
+their colour driven toward black, which under additive blending *is* the fade,
+so it needs no custom shader and nothing to sort. Two details do most of the
+work: the wake is spaced by **distance flown** rather than by time, so it looks
+the same at 26 units/s and at the speed cap; and bursts are thrown *inward*, into
+the open tube, because the ship rides just inside a solid wall and anything flung
+the other way is hidden behind it within a frame.
+
+Camera shake is added on top of the chase position rather than into it —
+damping toward a position that already contains the jitter would feed the shake
+back into itself and leave the camera off-centre. The screen flash is masked to
+the rim of the frame: the centre holds the vanishing point, the next gate, and
+the end-of-run panel, so the flash slams the edges and leaves the thing being
+read alone.
+
+[Audio.js](src/game/Audio.js) synthesises every sound at runtime from
+oscillators and filtered noise — no assets, nothing to preload. Nothing exists
+until the player's first key or click: browsers block audio before a gesture,
+and building an `AudioContext` early only earns a suspended one and a console
+warning, so the context is created inside that first event and the listeners
+waiting for it are dropped on the spot. The ring chime climbs a pentatonic
+ladder from Ring 1 to Ring 66, which is what keeps two consecutive clears from
+ever landing on an interval that sounds like a mistake. `M` or the HUD toggle
+mutes; the choice is stored in `localStorage` and a muted game schedules no
+audio nodes at all.
 
 ## Scoring
 

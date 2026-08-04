@@ -21,6 +21,10 @@
     <canvas id="game-canvas"></canvas>
 
     <div id="ui" class="ui">
+      <!-- Impact, warp, and milestone flashes. Colour and opacity are driven
+           from the game loop; it is inert at rest. -->
+      <div class="flash" id="flash" aria-hidden="true"></div>
+
       <header class="hud">
         <div class="hud-block">
           <span class="hud-label">Rings</span>
@@ -40,8 +44,19 @@
         <div class="hud-block hud-block--right">
           <span class="hud-label">Best rings</span>
           <span class="hud-value" id="hud-best">0</span>
+          <button
+            class="mute"
+            id="mute"
+            type="button"
+            aria-pressed="false"
+            title="Toggle sound (M)"
+          >
+            Sound on
+          </button>
         </div>
       </header>
+
+      <p class="milestone" id="milestone" hidden></p>
 
       <div class="overlay" id="overlay">
         <h1 class="overlay-title" id="overlay-title">TunnelWarp</h1>

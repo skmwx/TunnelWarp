@@ -7,6 +7,23 @@ import { angularDelta, clamp, normalizeAngle, TAU } from "./tunnelMath.js";
 /** Angular width of one lane. The whole gate model is quantised to this. */
 export const LANE_ANGLE = TAU / RINGS.lanes;
 
+/** Gate colours at rest, and the white the ring-clear pulse drives them to. */
+const EDGE_COLOR = new THREE.Color(0xffe6b0);
+const FRAME_COLOR = new THREE.Color(0xffb45c);
+const FLASH_COLOR = new THREE.Color(0xffffff);
+/** Wedge emissive colour and strength at rest, and at the peak of the pulse. */
+const WEDGE_COLOR = new THREE.Color(0xff7a14);
+const WEDGE_EMISSIVE = 0.35;
+const WEDGE_FLASH_EMISSIVE = 1.6;
+/**
+ * How far the pulse pulls the wedges toward white. Short of the whole way:
+ * intensity alone only makes the barrier a more saturated orange, and a gate
+ * that has been cleared should not read as a hotter version of one that has
+ * not — but a wedge taken all the way to white loses the amber the eye has
+ * learned means "blocked".
+ */
+const WEDGE_FLASH_TINT = 0.55;
+
 /** True when `lane` falls inside the `lanes` run that starts at `startLane`. */
 function inLaneRun(lane, startLane, lanes) {
   const offset = (((lane - startLane) % RINGS.lanes) + RINGS.lanes) % RINGS.lanes;
@@ -34,30 +51,33 @@ function isGapLane(ring, lane) {
  * Every mesh exists from construction and is only toggled with `visible` or
  * rotated, so reconfiguring a gate costs no allocation — including the markers
  * for the second gap, which are built for every view and hidden on the gates
- * that only have one. Geometry is shared across views; materials are per-view
- * so later phases can tint single gates.
+ * that only have one. Geometry is shared across views; materials are per-view,
+ * which is what lets a single gate light up when it is cleared.
  */
 class RingView {
   constructor(wedgeGeometry, edgeGeometry, frameGeometry) {
     this.object3D = new THREE.Group();
     this.object3D.visible = false;
 
+    /** Ring-clear pulse, `0..1`. Decays to nothing over a fraction of a second. */
+    this._flash = 0;
+
     this.wedgeMaterial = new THREE.MeshStandardMaterial({
       color: 0x2a0f06,
-      emissive: 0xff7a14,
+      emissive: WEDGE_COLOR.clone(),
       // Kept below the gap markers and rim so the opening is the brightest
       // thing on the gate, not the barrier.
-      emissiveIntensity: 0.35,
+      emissiveIntensity: WEDGE_EMISSIVE,
       roughness: 0.6,
       metalness: 0.15,
       // Gates are flat, and the player sees their back face after a pass.
       side: THREE.DoubleSide,
     });
     this.edgeMaterial = new THREE.MeshBasicMaterial({
-      color: 0xffe6b0,
+      color: EDGE_COLOR.clone(),
       side: THREE.DoubleSide,
     });
-    this.frameMaterial = new THREE.MeshBasicMaterial({ color: 0xffb45c });
+    this.frameMaterial = new THREE.MeshBasicMaterial({ color: FRAME_COLOR.clone() });
 
     this.wedges = [];
     for (let lane = 0; lane < RINGS.lanes; lane += 1) {
@@ -115,8 +135,56 @@ class RingView {
     this.object3D.rotation.z = ring.rotation;
   }
 
+  /**
+   * Lights the gate up and swells it, for the frame the ship comes out the back
+   * of it.
+   *
+   * The confirmation is put on the gate itself rather than only in the HUD
+   * because that is where the player is looking: at speed, a number in the
+   * corner is read long after the moment it was reporting.
+   *
+   * @param {number} [strength] Peak of the pulse, `0..1`.
+   */
+  flash(strength = 1) {
+    this._flash = Math.max(this._flash, strength);
+    this._applyFlash();
+  }
+
+  /** Decays the pulse. Free on the gates that are not lit, which is most. */
+  updateFlash(delta) {
+    if (this._flash <= 0) return;
+
+    this._flash = Math.max(this._flash - RINGS.flashDecay * delta, 0);
+    this._applyFlash();
+  }
+
+  _applyFlash() {
+    const flash = this._flash;
+
+    this.wedgeMaterial.emissiveIntensity =
+      WEDGE_EMISSIVE + flash * (WEDGE_FLASH_EMISSIVE - WEDGE_EMISSIVE);
+    this.wedgeMaterial.emissive.lerpColors(
+      WEDGE_COLOR,
+      FLASH_COLOR,
+      flash * WEDGE_FLASH_TINT,
+    );
+    this.edgeMaterial.color.lerpColors(EDGE_COLOR, FLASH_COLOR, flash);
+    this.frameMaterial.color.lerpColors(FRAME_COLOR, FLASH_COLOR, flash);
+
+    // Z is left alone: the gate's contact band is what the run was judged on,
+    // and a celebration is not allowed to move it even cosmetically.
+    const scale = 1 + flash * RINGS.flashScale;
+    this.object3D.scale.set(scale, scale, 1);
+  }
+
   release() {
     this.object3D.visible = false;
+    // A gate recycled mid-pulse would carry the glow onto the next gate it is
+    // reused for, which would read as a gate that is already cleared.
+    if (this._flash > 0) {
+      this._flash = 0;
+      this._applyFlash();
+    }
   }
 
   dispose() {
@@ -195,6 +263,17 @@ export class Obstacles {
   }
 
   /**
+   * Pulses a single gate. Called by `Game` on the frame a gate is cleared, so
+   * the confirmation lands on the object the player just flew through.
+   *
+   * @param {object} ring A gate from `rings`.
+   * @param {number} [strength] Peak of the pulse, `0..1`.
+   */
+  flash(ring, strength = 1) {
+    ring.view.flash(strength);
+  }
+
+  /**
    * Marks the field as scenery behind a menu rather than a live run.
    *
    * Scenery gates are planned as opening rings however long they keep coming,
@@ -228,6 +307,7 @@ export class Obstacles {
         ring.rotation += ring.rotationSpeed * delta;
       }
 
+      ring.view.updateFlash(delta);
       ring.view.sync(ring);
     }
 

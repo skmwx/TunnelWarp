@@ -9,9 +9,15 @@
 const LEFT_KEYS = new Set(["ArrowLeft", "KeyA"]);
 const RIGHT_KEYS = new Set(["ArrowRight", "KeyD"]);
 const ACTION_KEYS = new Set(["Space", "Enter", "NumpadEnter"]);
+const MUTE_KEYS = new Set(["KeyM"]);
 
 // Keys we own during play; the browser must not scroll or activate anything.
-const HANDLED_KEYS = new Set([...LEFT_KEYS, ...RIGHT_KEYS, ...ACTION_KEYS]);
+const HANDLED_KEYS = new Set([
+  ...LEFT_KEYS,
+  ...RIGHT_KEYS,
+  ...ACTION_KEYS,
+  ...MUTE_KEYS,
+]);
 
 export class Input {
   constructor(target = window) {
@@ -23,6 +29,10 @@ export class Input {
     /** True for exactly one poll after the action key is pressed. */
     this.actionPressed = false;
     this.actionHeld = false;
+
+    /** Same one-shot contract as the action key, for the mute toggle. */
+    this.mutePressed = false;
+    this.muteHeld = false;
 
     this._onKeyDown = this._onKeyDown.bind(this);
     this._onKeyUp = this._onKeyUp.bind(this);
@@ -48,12 +58,21 @@ export class Input {
     return pressed;
   }
 
+  /** Consumes the one-shot mute press. Holding the key toggles once. */
+  consumeMute() {
+    const pressed = this.mutePressed;
+    this.mutePressed = false;
+    return pressed;
+  }
+
   /** Clears transient state, e.g. when a run ends or the tab is hidden. */
   reset() {
     this.left = false;
     this.right = false;
     this.actionPressed = false;
     this.actionHeld = false;
+    this.mutePressed = false;
+    this.muteHeld = false;
   }
 
   dispose() {
@@ -64,6 +83,11 @@ export class Input {
 
   _onKeyDown(event) {
     if (!HANDLED_KEYS.has(event.code)) return;
+    // Chords belong to the browser and the OS — `Ctrl+M` and `Cmd+M` are real
+    // shortcuts, and no one plays holding a modifier. Only key-down is gated:
+    // gating key-up too would strand a key that was pressed clean and released
+    // with a modifier held.
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
     event.preventDefault();
 
     if (LEFT_KEYS.has(event.code)) this.left = true;
@@ -75,6 +99,11 @@ export class Input {
       if (!event.repeat && !this.actionHeld) this.actionPressed = true;
       this.actionHeld = true;
     }
+
+    if (MUTE_KEYS.has(event.code)) {
+      if (!event.repeat && !this.muteHeld) this.mutePressed = true;
+      this.muteHeld = true;
+    }
   }
 
   _onKeyUp(event) {
@@ -84,6 +113,7 @@ export class Input {
     if (LEFT_KEYS.has(event.code)) this.left = false;
     if (RIGHT_KEYS.has(event.code)) this.right = false;
     if (ACTION_KEYS.has(event.code)) this.actionHeld = false;
+    if (MUTE_KEYS.has(event.code)) this.muteHeld = false;
   }
 
   _onBlur() {

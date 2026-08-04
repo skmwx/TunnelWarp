@@ -67,11 +67,17 @@ export class Player {
 }
 
 /**
- * The UFO mesh and its cosmetic motion (bank, idle spin, underglow).
+ * The UFO mesh and its cosmetic motion (bank, idle spin, rim chase, thruster).
  *
- * Keeping this separate from `Player` means gameplay tuning never has to
- * reason about mesh hierarchy, and the ship can be replaced wholesale in
- * Phase 9 without touching movement.
+ * Keeping this separate from `Player` means gameplay tuning never has to reason
+ * about mesh hierarchy, and the ship's look can be reworked without touching
+ * how it moves.
+ *
+ * The silhouette is built to survive the two things that make a small marker
+ * hard to read in this game: it is seen from behind at all times, and it sits
+ * against a lit tunnel wall. So the body stays dark and every readable feature
+ * is emissive — a hard bright rim, alternating lamps that chase as the saucer
+ * spins, and a thruster plume pointed at the camera that stretches with warp.
  */
 export class PlayerView {
   constructor() {
@@ -116,6 +122,15 @@ export class PlayerView {
     this._hullMaterial.emissiveIntensity =
       PLAYER.hullEmissive + warp * (PLAYER.warpEmissive - PLAYER.hullEmissive);
     this._lamp.intensity = PLAYER.lampIntensity * (1 + warp * PLAYER.warpLamp);
+
+    // The plume is the one part of the ship the player is looking straight down
+    // the length of, so stretching it is the clearest read on the screen that
+    // the warp is running.
+    this._thruster.scale.z =
+      PLAYER.thrusterLength * (1 + warp * PLAYER.warpThruster);
+    // Grown from its mouth rather than its centre, so it only ever extends back
+    // toward the camera instead of pushing through the hull.
+    this._thruster.position.z = 0.3 + this._thruster.scale.z * 0.5;
   }
 
   _buildShip() {
@@ -164,8 +179,33 @@ export class PlayerView {
     glow.scale.set(1, 0.6, 1);
     hull.add(glow);
 
+    this._buildRimLights(hull);
+
     this._hull = hull;
     this.object3D.add(hull);
+
+    // The plume trails toward the camera, which is the one direction the player
+    // is always looking along — so it is the cheapest place to put a readout of
+    // how hard the ship is flying.
+    const plume = new THREE.ConeGeometry(0.2, 1, 12, 1, true);
+    // Baked into the geometry rather than set on the mesh, so `scale.z` stretches
+    // the plume's length instead of its mouth.
+    plume.rotateX(Math.PI / 2);
+
+    this._thruster = new THREE.Mesh(
+      plume,
+      new THREE.MeshBasicMaterial({
+        color: 0x9be8ff,
+        transparent: true,
+        opacity: 0.55,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      }),
+    );
+    this._thruster.scale.z = PLAYER.thrusterLength;
+    this._thruster.position.z = 0.3 + PLAYER.thrusterLength * 0.5;
+    this.object3D.add(this._thruster);
 
     // A light travelling with the ship keeps it lit once the tunnel (Phase 3)
     // replaces the static placeholder lighting.
@@ -173,5 +213,30 @@ export class PlayerView {
     lamp.position.y = -0.3;
     this._lamp = lamp;
     this.object3D.add(lamp);
+  }
+
+  /**
+   * Lamps around the saucer's edge, alternating bright and dim.
+   *
+   * Parented to the hull rather than animated, so the idle spin already in the
+   * ship carries them around: the alternation is what turns that spin into a
+   * visible chase, and a chase is what makes a marker this small read as a
+   * craft rather than a dot.
+   */
+  _buildRimLights(hull) {
+    const geometry = new THREE.SphereGeometry(0.065, 8, 6);
+    const bright = new THREE.MeshBasicMaterial({ color: 0xfff0fb });
+    const dim = new THREE.MeshBasicMaterial({ color: 0x8c2a68 });
+
+    for (let i = 0; i < PLAYER.rimLights; i += 1) {
+      const theta = (i / PLAYER.rimLights) * TAU;
+      const lamp = new THREE.Mesh(geometry, i % 2 === 0 ? bright : dim);
+      // On the rim itself: any further in and the hull's own curve hides them
+      // from a camera sitting behind and below the ship.
+      lamp.position.set(Math.cos(theta) * 0.53, 0, Math.sin(theta) * 0.53);
+      // The hull is squashed to 0.3 in Y; undoing that keeps the lamps round.
+      lamp.scale.y = 1 / 0.3;
+      hull.add(lamp);
+    }
   }
 }

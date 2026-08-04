@@ -1,4 +1,5 @@
 import { REWARD_TIERS, SCORE } from "./constants.js";
+import { openStorage, readItem, writeItem } from "./storage.js";
 
 /**
  * Run scoring, reward tiers, and the persistent local best.
@@ -14,25 +15,6 @@ import { REWARD_TIERS, SCORE } from "./constants.js";
 
 /** Versioned, so a future change to the stored shape ignores old records. */
 const STORAGE_KEY = "tunnelwarp.best.v1";
-
-/**
- * The `localStorage` handle, or `null` when storage is unusable.
- *
- * Probed with a real write: private-browsing modes hand back a storage object
- * that only throws once you try to use it, so merely reading `window.localStorage`
- * proves nothing.
- */
-function openStorage() {
-  try {
-    const storage = window.localStorage;
-    const probe = `${STORAGE_KEY}.probe`;
-    storage.setItem(probe, "1");
-    storage.removeItem(probe);
-    return storage;
-  } catch {
-    return null;
-  }
-}
 
 /** A finite, non-negative integer, or `0`. Stored values are never trusted. */
 function toCount(value) {
@@ -51,6 +33,21 @@ export function rewardTierFor(rings) {
     if (rings >= tier.rings) earned = tier;
   }
   return earned;
+}
+
+/**
+ * The highest milestone crossed by going from `from` rings to `to`, or `null`.
+ *
+ * A frame that resolves several gates at once can step over a milestone, and a
+ * milestone the player earned but never saw celebrated is worse than no
+ * celebration at all.
+ */
+export function milestoneBetween(from, to) {
+  let crossed = null;
+  for (const tier of REWARD_TIERS) {
+    if (tier.rings > from && tier.rings <= to) crossed = tier;
+  }
+  return crossed;
 }
 
 /** The next milestone ahead of `rings`, or `null` once all are earned. */
@@ -156,29 +153,24 @@ export class Score {
 
   _load() {
     const fallback = { rings: 0, score: 0 };
-    if (!this._storage) return fallback;
+    const raw = readItem(this._storage, STORAGE_KEY);
+    if (!raw) return fallback;
 
     try {
-      const raw = this._storage.getItem(STORAGE_KEY);
-      if (!raw) return fallback;
-
       const parsed = JSON.parse(raw);
       return { rings: toCount(parsed?.rings), score: toCount(parsed?.score) };
     } catch {
-      // Missing, unreadable, or corrupt. Starting from zero is always better
-      // than failing to boot over a leaderboard.
+      // Corrupt. Starting from zero is always better than failing to boot over
+      // a leaderboard.
       return fallback;
     }
   }
 
   _save() {
-    if (!this._storage) return;
-
-    try {
-      this._storage.setItem(STORAGE_KEY, JSON.stringify(this.best));
-    } catch {
-      // Quota, or a mode that allows reads but blocks writes. The in-memory
-      // best still stands for this session; no part of a run depends on it.
+    // A refused write — quota, or a mode that allows reads but blocks them —
+    // leaves the in-memory best standing for this session; no part of a run
+    // depends on it. The start screen stops promising it will be saved.
+    if (!writeItem(this._storage, STORAGE_KEY, JSON.stringify(this.best))) {
       this.persistent = false;
     }
   }
