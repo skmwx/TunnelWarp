@@ -73,7 +73,9 @@ export class Score {
     this.rings = 0;
     /** World units flown this run; the distance half of the score. */
     this.distance = 0;
-    /** Gate and milestone bonuses banked this run. */
+    /** Warp orbs collected this run. Reported, but never a best in its own right. */
+    this.orbs = 0;
+    /** Gate, orb, and milestone bonuses banked this run. */
     this.bonus = 0;
 
     this.best = this._load();
@@ -95,6 +97,7 @@ export class Score {
   reset() {
     this.rings = 0;
     this.distance = 0;
+    this.orbs = 0;
     this.bonus = 0;
     this.lastResult = null;
   }
@@ -102,6 +105,13 @@ export class Score {
   /** Banks the distance flown this frame. */
   addDistance(units) {
     if (units > 0) this.distance += units;
+  }
+
+  /** Credits collected warp orbs. The meter itself is `Game`'s to track. */
+  addOrbs(count) {
+    if (count <= 0) return;
+    this.orbs += count;
+    this.bonus += count * SCORE.perOrb;
   }
 
   /**
@@ -136,6 +146,7 @@ export class Score {
     this.lastResult = {
       rings,
       score,
+      orbs: this.orbs,
       ringsBeat,
       scoreBeat,
       tier: rewardTierFor(rings),

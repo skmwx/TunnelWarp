@@ -16,6 +16,20 @@ const RAIL_COLD = new THREE.Color(0x123a52);
 const RAIL_HOT = new THREE.Color(0x40265e);
 
 /**
+ * Where warp drags every colour, on top of wherever the speed tint had it.
+ *
+ * It has to be a separate axis rather than "more tint": by the late rings the
+ * speed tint is already pinned at hot, and a warp there would otherwise look
+ * identical to ordinary flight.
+ */
+const HOOP_WARP = new THREE.Color(0xbfe9ff);
+const ACCENT_WARP = new THREE.Color(0xffffff);
+// Held well below the hoops. The rails run the length of the tunnel and cover
+// more of the frame than anything else, so taking them to the same white-out
+// buries both the gates and the HUD text under them.
+const RAIL_WARP = new THREE.Color(0x3d7ba8);
+
+/**
  * The tunnel shell the player flies through.
  *
  * Three layers, cheapest first:
@@ -32,8 +46,11 @@ export class Tunnel {
     this.object3D = new THREE.Group();
 
     this._speed = SPEED.idle;
-    /** Cached tint parameter, so materials are only touched when it moves. */
+    /** How far into the warp look the tunnel is, `0..1`. */
+    this._warp = 0;
+    /** Cached tint parameters, so materials are only touched when one moves. */
     this._tint = -1;
+    this._appliedWarp = -1;
 
     /** Z span of the hoop band; a recycled hoop jumps back exactly this far. */
     this._length = TUNNEL.hoopCount * TUNNEL.hoopSpacing;
@@ -52,6 +69,11 @@ export class Tunnel {
   /** Sets the scroll speed in world units per second. */
   setSpeed(speed) {
     this._speed = speed;
+  }
+
+  /** Blends in the warp look, `0` for none through `1` for full warp. */
+  setWarp(amount) {
+    this._warp = clamp(amount, 0, 1);
   }
 
   update(delta) {
@@ -193,11 +215,21 @@ export class Tunnel {
     // coldest on the launch ring and fully hot only at the speed cap.
     const range = Math.max(SPEED.cap - SPEED.start, 1);
     const tint = clamp((this._speed - SPEED.start) / range, 0, 1);
-    if (Math.abs(tint - this._tint) < 0.002) return;
-    this._tint = tint;
 
-    this._hoopMaterial.color.lerpColors(HOOP_COLD, HOOP_HOT, tint);
-    this._accentMaterial.color.lerpColors(ACCENT_COLD, ACCENT_HOT, tint);
-    this._railMaterial.color.lerpColors(RAIL_COLD, RAIL_HOT, tint);
+    if (
+      Math.abs(tint - this._tint) < 0.002 &&
+      Math.abs(this._warp - this._appliedWarp) < 0.002
+    ) {
+      return;
+    }
+    this._tint = tint;
+    this._appliedWarp = this._warp;
+
+    const warp = this._warp;
+    this._hoopMaterial.color.lerpColors(HOOP_COLD, HOOP_HOT, tint).lerp(HOOP_WARP, warp);
+    this._accentMaterial.color
+      .lerpColors(ACCENT_COLD, ACCENT_HOT, tint)
+      .lerp(ACCENT_WARP, warp);
+    this._railMaterial.color.lerpColors(RAIL_COLD, RAIL_HOT, tint).lerp(RAIL_WARP, warp);
   }
 }

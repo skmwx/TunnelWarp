@@ -335,6 +335,10 @@ export class Obstacles {
     for (let i = 0; i < ring.gapCount; i += 1) {
       this._lastArrivals[i] = normalizeAngle(ring.gaps[i].centerTheta + drift);
     }
+
+    // Published for `Collectibles`, which strings warp orbs between the angles
+    // consecutive gates demand the ship be at.
+    ring.arrivalTheta = this._lastArrivals[0];
   }
 
   /**
@@ -438,6 +442,12 @@ export class Obstacles {
         centerTheta: 0,
       })),
       gapCount: 1,
+      /**
+       * Where the first opening will be when the gate reaches the ship — so,
+       * the angle the player has to be at on this gate. Set at layout time and
+       * read by `Collectibles` to lay orbs along the path between gates.
+       */
+      arrivalTheta: 0,
       /** Radians the gate has turned since it spawned. Added to gap angles. */
       rotation: 0,
       rotationSpeed: 0,

@@ -30,6 +30,12 @@
         <div class="hud-block hud-block--center">
           <span class="hud-label">Score</span>
           <span class="hud-value hud-value--score" id="hud-score">0</span>
+          <div class="hud-warp" id="hud-warp" data-state="charging">
+            <span class="hud-warp-track">
+              <span class="hud-warp-fill" id="hud-warp-fill"></span>
+            </span>
+            <span class="hud-warp-label" id="hud-warp-label">Warp energy</span>
+          </div>
         </div>
         <div class="hud-block hud-block--right">
           <span class="hud-label">Best rings</span>
@@ -50,6 +56,10 @@
           <div class="overlay-stat">
             <dt class="overlay-stat-label">Score</dt>
             <dd class="overlay-stat-value" id="stat-score">0</dd>
+          </div>
+          <div class="overlay-stat">
+            <dt class="overlay-stat-label">Energy</dt>
+            <dd class="overlay-stat-value" id="stat-energy">0</dd>
           </div>
           <div class="overlay-stat">
             <dt class="overlay-stat-label">Best rings</dt>

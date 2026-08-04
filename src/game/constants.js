@@ -50,6 +50,14 @@ export const PLAYER = {
   bankResponse: 9,
   /** Saucer idle spin, radians per second. */
   spinSpeed: 1.5,
+  /** Hull emissive at rest, and the value warp drives it to. */
+  hullEmissive: 0.28,
+  warpEmissive: 1.15,
+  /** Point light travelling with the ship, and its warp multiplier. */
+  lampIntensity: 22,
+  warpLamp: 1.4,
+  /** Extra fraction of idle spin at full warp. */
+  warpSpin: 2.5,
 };
 
 /**
@@ -190,6 +198,60 @@ export const DIFFICULTY = {
 };
 
 /**
+ * Warp energy: the orbs, the meter they fill, and the warp itself.
+ *
+ * Orbs are laid in pods along the flight path *between* two gates, at the
+ * angles the player has to be at when each of those gates arrives. That makes
+ * every orb reachable by construction, keeps them clear of any gate's Z band,
+ * and means chasing energy pulls the player onto a good line rather than off
+ * one — which matters for the young player this cabinet is aimed at.
+ *
+ * Tuned so a player who takes most of the orbs earns a warp roughly every ten
+ * to fifteen gates, and each warp is worth about four of them.
+ */
+export const WARP = {
+  /** Orbs in one pod. Reads as a trail to follow, not a dot to clip. */
+  podSize: 3,
+  /** Odds the stretch between two gates gets a pod at all. */
+  podChance: 0.5,
+  /** Orbs that fill the meter. */
+  orbsToFill: 16,
+  orbRadius: 0.3,
+  /** Orb spin, radians per second. Idle motion, so they read as pickups. */
+  spinSpeed: 2.4,
+  /**
+   * Collection footprint, as half-extents around the ship. Generous next to
+   * the collision hitbox: missing an orb costs nothing, so a near miss that
+   * looked like a hit is pure frustration with no upside.
+   */
+  collectHalfAngle: 0.2,
+  collectHalfDepth: 0.9,
+  /** Orbs are recycled once this far behind the camera. */
+  despawnZ: 6,
+
+  /** Seconds of warp per activation. */
+  duration: 3,
+  /** Forward speed multiplier while warping; stacks past `SPEED.cap`. */
+  speedScale: 1.3,
+  /** Snappier than `SPEED.response`, so warp reads as a kick, not a drift. */
+  speedResponse: 5,
+  /** Degrees of extra FOV at full warp. */
+  fovBoost: 15,
+  /** How fast the warp look ramps in and out, per second. */
+  viewResponse: 6,
+  /**
+   * Fraction of a gate spacing that has to still be ahead of the ship before
+   * invulnerability is allowed to drop.
+   *
+   * Without this, a warp that expired just short of a gate would hand the
+   * player a gate with no time to read it — a death caused by the power-up.
+   * Warp instead holds until the ship is freshly past a gate, which extends it
+   * by at most one gate and makes every warp end on the same clean beat.
+   */
+  exitLead: 0.8,
+};
+
+/**
  * Scoring weights.
  *
  * Rings are the headline number the cabinet is built around; the score is the
@@ -202,6 +264,8 @@ export const SCORE = {
   perDistanceUnit: 1,
   /** Points for clearing a single gate, before any milestone bonus. */
   perRing: 250,
+  /** Points per warp orb. Below a gate: energy is a bonus, not the objective. */
+  perOrb: 120,
 };
 
 /**

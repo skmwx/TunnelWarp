@@ -1,4 +1,4 @@
-import { COLLISION } from "./constants.js";
+import { COLLISION, WARP } from "./constants.js";
 import { angularDelta, normalizeAngle } from "./tunnelMath.js";
 
 /**
@@ -75,11 +75,17 @@ export function createRunResult() {
  * Gates are tested against the Z span they swept during the frame rather than
  * the Z they landed on, so a long frame can never let a gate jump the ship.
  *
+ * While `invulnerable` — the warp state — the hit test is skipped entirely
+ * rather than its outcome ignored, so gates the ship phases through still
+ * resolve as passed and still count. A warp is a way through the gauntlet, not
+ * a pause in it.
+ *
  * @param {Array<object>} rings   Active gates, ordered nearest first.
  * @param {{theta: number, z: number}} player
  * @param {{cleared: number, hit: object|null}} result Caller-owned, reused.
+ * @param {boolean} [invulnerable] True while warp is active.
  */
-export function resolveRings(rings, player, result) {
+export function resolveRings(rings, player, result, invulnerable = false) {
   result.cleared = 0;
   result.hit = null;
 
@@ -98,6 +104,7 @@ export function resolveRings(rings, player, result) {
     // frame. Either way the ship had to be lined up with the gap.
     const contacting = ring.prevZ <= bandEnd;
     if (
+      !invulnerable &&
       contacting &&
       !isInsideAnyGap(player.theta, ring, COLLISION.playerHalfAngle)
     ) {
@@ -114,4 +121,40 @@ export function resolveRings(rings, player, result) {
   }
 
   return result;
+}
+
+/**
+ * Marks every warp orb the ship swept through this frame as collected.
+ *
+ * Same shape of test as a gate, and for the same reason: an orb is a Z band and
+ * an angle, the ship is a footprint, and the frame's Z sweep is what is tested
+ * rather than the Z the orb landed on — at the speed cap an orb moves further
+ * per frame than its own collection depth, so a point-in-time test would let
+ * the ship pass straight through one.
+ *
+ * The caller owns removal; this only sets `collected`.
+ *
+ * @param {Array<object>} orbs Active orbs, ordered nearest first.
+ * @param {{theta: number, z: number}} player
+ * @returns {number} How many orbs were collected this frame.
+ */
+export function resolvePickups(orbs, player) {
+  const bandStart = player.z - WARP.collectHalfDepth;
+  const bandEnd = player.z + WARP.collectHalfDepth;
+  let collected = 0;
+
+  for (const orb of orbs) {
+    if (orb.collected) continue;
+    // Behind the ship already, or not yet arrived. Both are cheap to skip and
+    // most orbs on any given frame are one or the other.
+    if (orb.prevZ > bandEnd || orb.z < bandStart) continue;
+    if (angularDistance(player.theta, orb.theta) > WARP.collectHalfAngle) {
+      continue;
+    }
+
+    orb.collected = true;
+    collected += 1;
+  }
+
+  return collected;
 }

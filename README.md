@@ -19,11 +19,11 @@ the first load needs network access.
 
 ## Controls
 
-| Key                | Action                             |
-| ------------------ | ---------------------------------- |
-| `ArrowLeft` / `A`  | Rotate left around the tunnel wall |
-| `ArrowRight` / `D` | Rotate right                       |
-| `Space` / `Enter`  | Start and restart                  |
+| Key                | Action                                          |
+| ------------------ | ----------------------------------------------- |
+| `ArrowLeft` / `A`  | Rotate left around the tunnel wall              |
+| `ArrowRight` / `D` | Rotate right                                    |
+| `Space` / `Enter`  | Start and restart; mid-run, fire a charged warp |
 
 The ship rides the wall like a clock hand, so a direction key always turns the
 same way around the tube. The mapping is anchored to the starting pose: from the
@@ -60,8 +60,9 @@ src/
     Player.js         Angular player state + UFO mesh
     Tunnel.js         Scrolling tunnel shell: wall, rails, recycling hoops
     Obstacles.js      Ring gate spawning, motion, recycling, and meshes
+    Collectibles.js   Warp energy orbs: pod placement, motion, collection
     Difficulty.js     The ramp: speed, spacing, gap width, rotation, variants
-    Collision.js      Angular math, ring clearing, and run-ending hits
+    Collision.js      Angular math, ring clearing, run-ending hits, pickups
     Score.js          Run scoring, reward tiers, persistent local best
     constants.js      Shared world, player, gate, score, and camera tuning
     tunnelMath.js     Polar helpers and framerate-independent easing
@@ -78,15 +79,15 @@ Phases follow [docs/main/02_Phased_Implementation_Plan.md](docs/main/02_Phased_I
 - [x] Phase 5 — collision, ring clearing, run end
 - [x] Phase 6 — score, UI overlay, local best
 - [x] Phase 7 — difficulty progression
-- [ ] Phase 8 — collectibles and warp meter
+- [x] Phase 8 — collectibles and warp meter
 - [ ] Phase 9 — visual and audio polish
 - [ ] Phase 10 — usability, accessibility, performance
 - [ ] Phase 11 — manual QA and release candidate
 
 The ring-survival loop is playable end to end: gates spawn ahead with a safe
 gap, flying through one increments the ring counter, clipping one ends the run,
-and clearing 66 wins. Difficulty now ramps across a run — see below. Warp energy
-and the warp meter arrive in Phase 8.
+and clearing 66 wins. Difficulty ramps across a run, and warp energy strung
+between the gates charges a warp — both are described below.
 
 ## Difficulty
 
@@ -120,6 +121,34 @@ Verified by simulation: a perfect autopilot cleared 60/60 generated runs to Ring
 66, while a pilot capped at a 200ms reaction delay never died before Ring 10 and
 reached a median of Ring 25.
 
+## Warp energy
+
+Orbs are laid in pods of three between consecutive gates, at the angles the ship
+has to be at when each of those gates arrives — see
+[Collectibles.js](src/game/Collectibles.js). Placement is derived from the gates
+rather than rolled separately, so every orb sits on a line the player could fly,
+none can land inside a blocked segment, and chasing energy pulls the player onto
+a good line instead of off one. Roughly half the gate-to-gate stretches get a
+pod, so a run that sweeps up most of them earns a warp about every thirteen
+gates.
+
+Sixteen orbs fill the meter. `Space` then spends it whole — a partial meter does
+nothing, so warp can never fire early — and for three seconds the ship flies 30%
+faster, glows, widens the camera's FOV by 15°, whites out the tunnel, and phases
+through gates. Gates crossed during a warp still count: a warp is a way through
+the gauntlet, not a pause in it.
+
+Warp holds past its timer until the ship is freshly clear of a gate. Without
+that, a warp expiring just short of one would hand the player a gate with no
+time to read it — a death caused by the power-up. The threshold is a share of
+the gate *spacing*, not of the reaction window: warp covers a stretch faster
+than the window that stretch was built from, so a warp waiting for a full window
+would never get one and would never end. It extends a warp by at most one gate,
+and makes every warp end on the same clean beat.
+
+The whole layer is optional. Ignoring every orb costs the bonus points and the
+warp, and nothing else.
+
 ## Scoring
 
 Rings cleared are the run's result; the score ranks two runs that ended on the
@@ -130,6 +159,7 @@ short lucky one each keep their record — see [Score.js](src/game/Score.js).
 | --------------- | ----------------------------------------- |
 | Distance flown  | 1 per world unit (26/s at launch, 74/s capped) |
 | Gate cleared    | 250                                       |
+| Warp orb        | 120                                       |
 | Ring 10 — small prize | 1,000 bonus                         |
 | Ring 30 — big prize   | 5,000 bonus                         |
 | Ring 66 — jackpot     | 25,000 bonus                        |
@@ -147,4 +177,6 @@ centres and widths and a rotation; the ship is a fixed Z with an angular and a
 depth half-extent from
 `COLLISION` in [constants.js](src/game/constants.js). Gates are tested against
 the Z span they swept during the frame, so a long frame cannot let one jump the
-ship.
+ship. Orbs are collected by the same swept test with a more generous footprint:
+missing one costs nothing, so a near miss that looked like a hit is pure
+frustration with no upside.

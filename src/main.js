@@ -12,11 +12,15 @@ const ui = {
   overlayStats: document.getElementById("overlay-stats"),
   statRings: document.getElementById("stat-rings"),
   statScore: document.getElementById("stat-score"),
+  statEnergy: document.getElementById("stat-energy"),
   statBest: document.getElementById("stat-best"),
   rings: document.getElementById("hud-rings"),
   score: document.getElementById("hud-score"),
   best: document.getElementById("hud-best"),
   tier: document.getElementById("hud-tier"),
+  warp: document.getElementById("hud-warp"),
+  warpFill: document.getElementById("hud-warp-fill"),
+  warpLabel: document.getElementById("hud-warp-label"),
 };
 
 const game = new Game({ canvas, ui });

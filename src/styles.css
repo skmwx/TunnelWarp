@@ -108,6 +108,73 @@ body {
   background: rgba(255, 62, 165, 0.12);
 }
 
+/* Warp meter. Charging shows how full it is; warping shows how much is left. */
+.hud-warp {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  margin-top: 9px;
+}
+
+.hud-warp-track {
+  display: block;
+  width: clamp(120px, 15vw, 210px);
+  height: 8px;
+  padding: 1px;
+  border: 1px solid rgba(70, 240, 255, 0.32);
+  border-radius: 999px;
+  background: rgba(4, 3, 13, 0.55);
+}
+
+.hud-warp-fill {
+  display: block;
+  width: 0%;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #1d6a8e, var(--neon-cyan));
+  /* Just long enough to smooth the per-orb jumps, short enough that the drain
+     during a warp still reads as a countdown. */
+  transition: width 120ms linear;
+}
+
+.hud-warp-label {
+  font-size: clamp(9px, 1.2vh, 12px);
+  color: rgba(232, 246, 255, 0.5);
+}
+
+/* A full meter is the one HUD element the player has to act on, so it is the
+   only one that moves. */
+.hud-warp[data-state="ready"] .hud-warp-track {
+  border-color: rgba(255, 62, 165, 0.7);
+  box-shadow: 0 0 14px rgba(255, 62, 165, 0.45);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+.hud-warp[data-state="ready"] .hud-warp-fill {
+  background: linear-gradient(90deg, var(--neon-cyan), var(--neon-magenta));
+}
+
+.hud-warp[data-state="ready"] .hud-warp-label {
+  color: var(--neon-magenta);
+  text-shadow: 0 0 12px rgba(255, 62, 165, 0.5);
+}
+
+.hud-warp[data-state="active"] .hud-warp-track {
+  border-color: rgba(232, 246, 255, 0.85);
+  box-shadow: 0 0 20px rgba(232, 246, 255, 0.5);
+}
+
+.hud-warp[data-state="active"] .hud-warp-fill {
+  background: linear-gradient(90deg, var(--neon-cyan), #ffffff);
+}
+
+.hud-warp[data-state="active"] .hud-warp-label {
+  color: var(--text);
+  letter-spacing: 0.26em;
+  text-shadow: 0 0 14px rgba(232, 246, 255, 0.6);
+}
+
 .overlay {
   flex: 1;
   display: flex;
@@ -152,7 +219,10 @@ body {
 /* End-of-run result panel. Shown for game over and victory only. */
 .overlay-stats {
   display: flex;
-  gap: clamp(20px, 5vw, 60px);
+  /* Wraps rather than overflowing the panel on a short, narrow viewport. */
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: clamp(18px, 4vw, 52px);
   margin: clamp(2px, 0.8vh, 8px) 0;
   padding: clamp(10px, 1.8vh, 18px) clamp(20px, 4vw, 44px);
   border: 1px solid rgba(70, 240, 255, 0.28);
@@ -226,10 +296,14 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .overlay-hint {
+  .overlay-hint,
+  .hud-warp[data-state="ready"] .hud-warp-track {
     animation: none;
   }
   .overlay {
+    transition: none;
+  }
+  .hud-warp-fill {
     transition: none;
   }
 }

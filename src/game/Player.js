@@ -77,6 +77,7 @@ export class PlayerView {
   constructor() {
     this.object3D = new THREE.Group();
     this._bank = 0;
+    this._warp = -1;
 
     this._buildShip();
   }
@@ -86,8 +87,10 @@ export class PlayerView {
    *
    * @param {Player} player
    * @param {number} delta
+   * @param {number} [warp] Warp intensity, `0..1`. Drives the hull's glow and
+   *   spin, so the ship reads as charged rather than merely fast.
    */
-  sync(player, delta) {
+  sync(player, delta, warp = 0) {
     const { x, y, z } = player.position;
     this.object3D.position.set(x, y, z);
 
@@ -100,21 +103,35 @@ export class PlayerView {
     this._bank = damp(this._bank, targetBank, PLAYER.bankResponse, delta);
 
     this.object3D.rotation.z = upright + this._bank;
-    this._hull.rotation.y += PLAYER.spinSpeed * delta;
+    this._hull.rotation.y += PLAYER.spinSpeed * (1 + warp * PLAYER.warpSpin) * delta;
+
+    this._applyWarp(warp);
+  }
+
+  /** Lights the hull for warp. The value is already eased, so this is a set. */
+  _applyWarp(warp) {
+    if (Math.abs(warp - this._warp) < 0.002) return;
+    this._warp = warp;
+
+    this._hullMaterial.emissiveIntensity =
+      PLAYER.hullEmissive + warp * (PLAYER.warpEmissive - PLAYER.hullEmissive);
+    this._lamp.intensity = PLAYER.lampIntensity * (1 + warp * PLAYER.warpLamp);
   }
 
   _buildShip() {
     // Saucer hull: a squashed sphere, dark so the emissive trim reads as the
     // silhouette rather than the body.
+    this._hullMaterial = new THREE.MeshStandardMaterial({
+      color: 0x2a0f2a,
+      emissive: 0xff3ea5,
+      emissiveIntensity: PLAYER.hullEmissive,
+      roughness: 0.3,
+      metalness: 0.65,
+    });
+
     const hull = new THREE.Mesh(
       new THREE.SphereGeometry(0.55, 24, 12),
-      new THREE.MeshStandardMaterial({
-        color: 0x2a0f2a,
-        emissive: 0xff3ea5,
-        emissiveIntensity: 0.28,
-        roughness: 0.3,
-        metalness: 0.65,
-      }),
+      this._hullMaterial,
     );
     hull.scale.set(1, 0.3, 1);
 
@@ -152,8 +169,9 @@ export class PlayerView {
 
     // A light travelling with the ship keeps it lit once the tunnel (Phase 3)
     // replaces the static placeholder lighting.
-    const lamp = new THREE.PointLight(0xff6ec0, 22, 9, 2);
+    const lamp = new THREE.PointLight(0xff6ec0, PLAYER.lampIntensity, 9, 2);
     lamp.position.y = -0.3;
+    this._lamp = lamp;
     this.object3D.add(lamp);
   }
 }
