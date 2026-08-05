@@ -1,9 +1,11 @@
 /**
- * Stateful keyboard handler.
+ * Stateful keyboard and gamepad handler.
  *
  * The game loop polls this object instead of reacting to key events directly,
  * so movement stays framerate-independent and start/restart cannot re-fire
- * while a key is held down.
+ * while a key is held down. The gamepad has no events to react to at all — it
+ * is sampled once per frame from `poll()`, which is the same shape, so both
+ * devices feed the same one-shot/held contract.
  */
 
 const LEFT_KEYS = new Set(["ArrowLeft", "KeyA"]);
@@ -18,6 +20,47 @@ const HANDLED_KEYS = new Set([
   ...ACTION_KEYS,
   ...MUTE_KEYS,
 ]);
+
+/**
+ * Sticks rest a little off centre and jitter around it, so anything under this
+ * is not a steering input. Past it the value is rescaled from zero, which keeps
+ * fine control at the edge of the deadzone instead of snapping to a quarter turn.
+ */
+const STICK_DEADZONE = 0.2;
+
+/** A trigger is analog; anything past half travel counts as a press. */
+const BUTTON_THRESHOLD = 0.5;
+
+/** Right stick X under the W3C standard mapping, which is what a DualShock 4
+ *  reports on every current desktop browser. */
+const STANDARD_STEER_AXIS = 2;
+
+/**
+ * Which axis is the right stick's horizontal travel.
+ *
+ * Under the standard mapping this is fixed. A pad the browser could not map
+ * exposes the raw device layout instead, and there the six-axis form is the
+ * one a DualShock 4 takes when its triggers are reported as axes — pushing the
+ * right stick out to index 3, with index 2 being a trigger that rests at -1 and
+ * would otherwise read as a permanent hard turn.
+ */
+function steerAxisIndex(pad) {
+  if (pad.mapping === "standard") return STANDARD_STEER_AXIS;
+  return pad.axes.length >= 6 ? 3 : STANDARD_STEER_AXIS;
+}
+
+/**
+ * Silences stick noise, then rescales what is left so the usable travel still
+ * spans the full `0..1`. Without the rescale the ship would jump to a fifth of
+ * its turn rate the moment the stick left the deadzone.
+ */
+function deadzone(value) {
+  const magnitude = Math.abs(value);
+  if (magnitude <= STICK_DEADZONE) return 0;
+
+  const scaled = (magnitude - STICK_DEADZONE) / (1 - STICK_DEADZONE);
+  return Math.sign(value) * Math.min(scaled, 1);
+}
 
 export class Input {
   constructor(target = window) {
@@ -34,6 +77,15 @@ export class Input {
     this.mutePressed = false;
     this.muteHeld = false;
 
+    /** Right stick, `-1..1`, deadzoned. Refreshed by `poll()` every frame. */
+    this.stickAxis = 0;
+    /** True while any pad button is down; the pad's half of `actionHeld`. */
+    this.padHeld = false;
+    /** True while a pad is attached, so the UI can name the right control. */
+    this.gamepadConnected = false;
+    /** Set once the player actually presses something on a pad. */
+    this.gamepadUsed = false;
+
     this._onKeyDown = this._onKeyDown.bind(this);
     this._onKeyUp = this._onKeyUp.bind(this);
     this._onBlur = this._onBlur.bind(this);
@@ -43,9 +95,60 @@ export class Input {
     this.target.addEventListener("blur", this._onBlur);
   }
 
-  /** -1 (counterclockwise), 0, or 1 (clockwise). Opposing keys cancel out. */
+  /**
+   * Steering, `-1..1`: negative counterclockwise, positive clockwise. Opposing
+   * keys cancel out. A held key wins over the stick — it is the unambiguous
+   * input of the two, and a pad resting just inside its deadzone must never
+   * water down a keyboard turn.
+   */
   get axis() {
-    return (this.right ? 1 : 0) - (this.left ? 1 : 0);
+    const keys = (this.right ? 1 : 0) - (this.left ? 1 : 0);
+    return keys !== 0 ? keys : this.stickAxis;
+  }
+
+  /**
+   * Samples every attached gamepad. Call once per frame, before the one-shots
+   * are consumed.
+   *
+   * Gamepads have no event stream — the browser only exposes a snapshot — so
+   * edges are found by diffing against the previous frame here. Pads are read
+   * together rather than one being adopted as "the" pad: with a single
+   * controller that costs nothing, and it means a second one just works.
+   */
+  poll() {
+    const pads = navigator.getGamepads?.() ?? [];
+
+    let stick = 0;
+    let anyButton = false;
+    let connected = false;
+
+    for (const pad of pads) {
+      if (!pad?.connected) continue;
+      connected = true;
+
+      const value = deadzone(pad.axes[steerAxisIndex(pad)] ?? 0);
+      // Strongest deflection wins, so a pad left untouched cannot cancel out
+      // the one being played on.
+      if (Math.abs(value) > Math.abs(stick)) stick = value;
+
+      for (const button of pad.buttons) {
+        if (button.pressed || button.value > BUTTON_THRESHOLD) {
+          anyButton = true;
+          break;
+        }
+      }
+    }
+
+    this.stickAxis = stick;
+    this.gamepadConnected = connected;
+
+    // Any button is the pad's action: it starts a run, restarts one, and fires
+    // the warp mid-run, which is exactly what Space does on the keyboard.
+    if (anyButton && !this.padHeld) {
+      this.actionPressed = true;
+      this.gamepadUsed = true;
+    }
+    this.padHeld = anyButton;
   }
 
   /**
@@ -65,7 +168,14 @@ export class Input {
     return pressed;
   }
 
-  /** Clears transient state, e.g. when a run ends or the tab is hidden. */
+  /**
+   * Clears transient state, e.g. when a run ends or the tab is hidden.
+   *
+   * `padHeld` is left alone: it is owned by `poll()`, which sees a blurred
+   * document's pads as neutral and clears it on its own. Zeroing it here would
+   * instead re-fire an action for a button that was already down on the frame
+   * focus came back.
+   */
   reset() {
     this.left = false;
     this.right = false;
@@ -73,6 +183,7 @@ export class Input {
     this.actionHeld = false;
     this.mutePressed = false;
     this.muteHeld = false;
+    this.stickAxis = 0;
   }
 
   dispose() {

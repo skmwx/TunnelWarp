@@ -61,7 +61,10 @@ const OVERLAY_COPY = {
       `Fly the ring gauntlet. Ring ${RINGS.victoryRing} is the jackpot. ` +
       "Sweep up warp energy on the way — a full meter buys a few seconds of " +
       "invulnerable warp.",
-    hint: "Press Space or Enter to launch",
+    hint: (game) =>
+      onPad(game)
+        ? "Press any button to launch · right stick steers"
+        : "Press Space or Enter to launch",
     reward: rewardLadder,
     stats: false,
   },
@@ -71,18 +74,33 @@ const OVERLAY_COPY = {
       game.ringsCleared === 0
         ? "No rings cleared. Line up with the lit gap before the gate arrives."
         : `${ringCount(game.ringsCleared)} cleared.`,
-    hint: "Press Space to fly again",
+    hint: replayHint,
     reward: rewardResult,
     stats: true,
   },
   [GameState.VICTORY]: {
     title: `Ring ${RINGS.victoryRing}`,
     body: (game) => `Jackpot. ${ringCount(game.ringsCleared)} cleared clean.`,
-    hint: "Press Space to fly again",
+    hint: replayHint,
     reward: rewardResult,
     stats: true,
   },
 };
+
+/**
+ * True while a gamepad is attached.
+ *
+ * Every prompt in the game names one control, and this decides which. A pad
+ * being present is enough — it is what the player reached for, and the keyboard
+ * keeps working either way, so nothing is lost by naming the pad first.
+ */
+function onPad(game) {
+  return game.input.gamepadConnected;
+}
+
+function replayHint(game) {
+  return onPad(game) ? "Press any button to fly again" : "Press Space to fly again";
+}
 
 /** Resolves an overlay field that may be either a literal or a function. */
 function copyText(field, game) {
@@ -135,9 +153,9 @@ function bestBadge(game) {
 
 /** Copy for the warp meter, keyed by the state the meter is in. */
 const WARP_LABEL = {
-  charging: "Warp energy",
-  ready: "Warp ready · Space",
-  active: "Warping",
+  charging: () => "Warp energy",
+  ready: (game) => (onPad(game) ? "Warp ready · any button" : "Warp ready · Space"),
+  active: () => "Warping",
 };
 
 /**
@@ -218,6 +236,8 @@ export class Game {
     this._hudWarpFill = -1;
     this._hudWarpState = "";
     this._hudMuted = null;
+    /** Which device the on-screen prompts are currently written for. */
+    this._hudOnPad = false;
 
     /** Full-screen flash: how bright it still is, and what threw it. */
     this._flashLevel = 0;
@@ -390,6 +410,10 @@ export class Game {
   }
 
   _update(delta) {
+    // Ahead of everything that reads input: the pad is a per-frame snapshot,
+    // and the one-shots it raises are consumed immediately below.
+    this.input.poll();
+    this._syncControlCopy();
     this._handleAction();
     if (this.input.consumeMute()) this._toggleMute();
     this._updateSpeed(delta);
@@ -612,8 +636,31 @@ export class Game {
     this.collectibles.setSpeed(this.speed);
   }
 
+  /**
+   * Rewrites the control prompts when a pad is plugged in or pulled out.
+   *
+   * A pad can arrive at any moment — the browser does not even admit one exists
+   * until its first button press — so the prompt that was correct when the
+   * overlay was drawn may be wrong by the time it is read.
+   */
+  _syncControlCopy() {
+    const onPadNow = onPad(this);
+    if (onPadNow === this._hudOnPad) return;
+    this._hudOnPad = onPadNow;
+
+    // Forces the next `_syncWarpMeter` to rewrite a label it would otherwise
+    // consider unchanged.
+    this._hudWarpState = "";
+    if (this.state !== GameState.PLAYING) this._renderUI();
+  }
+
   _handleAction() {
     if (!this.input.consumeAction()) return;
+
+    // A pad player may never touch the keyboard or the mouse, and a pad press
+    // is not a gesture the browser will start audio on. Asking anyway is the
+    // only shot at sound for a run played entirely on the controller.
+    if (this.input.gamepadUsed) this.audio.unlock();
 
     switch (this.state) {
       case GameState.READY:
@@ -794,7 +841,7 @@ export class Game {
     if (this._hudWarpState !== state) {
       this._hudWarpState = state;
       this.ui.warp.dataset.state = state;
-      this.ui.warpLabel.textContent = WARP_LABEL[state];
+      this.ui.warpLabel.textContent = WARP_LABEL[state](this);
     }
 
     if (this._hudWarpFill !== fill) {

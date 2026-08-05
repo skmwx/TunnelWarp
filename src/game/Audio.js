@@ -78,6 +78,21 @@ export class AudioEngine {
     }
   }
 
+  /**
+   * Builds the context from something that is not a DOM gesture — a gamepad
+   * button, which browsers do not report as one.
+   *
+   * Whether it will actually make sound is the browser's call: a context built
+   * without an accepted gesture starts suspended, and `_begin` retries the
+   * resume on every voice until one is granted (a click on the page, the mute
+   * button, any key). Building it now means that retry is already in place, and
+   * costs nothing if the answer stays no.
+   */
+  unlock() {
+    if (this._ctx) return;
+    this._unlock();
+  }
+
   /** Mutes or unmutes, and remembers the choice for the next session. */
   setMuted(muted) {
     if (this.muted === muted) return;

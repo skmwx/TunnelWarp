@@ -30,6 +30,26 @@ The ship rides the wall like a clock hand, so a direction key always turns the
 same way around the tube. The mapping is anchored to the starting pose: from the
 bottom of the tunnel, right moves the ship toward the right of the screen.
 
+### Gamepad
+
+A DualShock 4 — or any pad the browser reports under the standard mapping — is
+supported alongside the keyboard, and either can be used at any moment.
+
+| Control      | Action                                              |
+| ------------ | --------------------------------------------------- |
+| Right stick  | Steer, left and right. Analog: a nudge turns gently  |
+| Any button   | Start and restart; mid-run, fire a charged warp      |
+
+The stick is deadzoned against resting drift, then rescaled so the travel past
+the deadzone still spans the full turn rate. A held key overrides the stick,
+which keeps a keyboard turn from being watered down by a pad sitting nearby.
+
+On-screen prompts follow whichever device is attached, and switch the moment a
+pad is plugged in or pulled out. Two caveats come from the browser rather than
+the game: a pad is invisible to the page until its first button press, and a
+button press is not a gesture browsers will start audio on — so a session played
+entirely on the pad may stay silent until the page is clicked or a key pressed.
+
 ## Browser automation (Playwright MCP)
 
 [.mcp.json](.mcp.json) registers a project-scoped Playwright MCP server so Claude
@@ -57,7 +77,7 @@ src/
   styles.css          UI overlay styling
   game/
     Game.js           State machine, scene setup, frame loop
-    Input.js          Stateful keyboard handler
+    Input.js          Stateful keyboard handler + per-frame gamepad polling
     Player.js         Angular player state + UFO mesh
     Tunnel.js         Scrolling tunnel shell: wall, rails, recycling hoops
     Obstacles.js      Ring gate spawning, motion, recycling, and meshes
@@ -137,7 +157,7 @@ a good line instead of off one. Roughly half the gate-to-gate stretches get a
 pod, so a run that sweeps up most of them earns a warp about every thirteen
 gates.
 
-Sixteen orbs fill the meter. `Space` then spends it whole — a partial meter does
+Sixteen orbs fill the meter. `Space` — or any pad button — then spends it whole — a partial meter does
 nothing, so warp can never fire early — and for three seconds the ship flies 30%
 faster, glows, widens the camera's FOV by 15°, whites out the tunnel, and phases
 through gates. Gates crossed during a warp still count: a warp is a way through
